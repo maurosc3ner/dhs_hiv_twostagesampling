@@ -1,17 +1,15 @@
 # Performing statistical analysis for complex survey data
 
 This repo is intended for a brief summary of all statistical analyses required for the manuscript *Associated health and social determinants of mobile populations across
-HIV epidemic gradients in Southern Africa* (See references). The DHS survey design is a two-stage sampling procedure through a set of defined locations (primary sample units or PSU) statistically weighted to control for sample biases. Complex surveys are not only limited to DHS, several other health institutions also used due to its cost optimization (i.e. Behavioral Risk Factor Surveillance System [BRFSS] from CDC). So all the code here can be easily adapted for other surveys ;). 
+HIV epidemic gradients in Southern Africa* (See references). Due to the lack of documentation, two stage sampling in R is a little bit tricky at the beginning, this guide tries to speed up the learning curve. The DHS data is based on a two-stage sampling procedure through a set of defined locations (primary sample units or PSU per region/province). Those locations are statistically weighted to control for sample biases (specific strate, urban|rural for our case). Complex surveys are not only limited to DHS, several other health institutions around the world also use this procedure due to its cost optimization (i.e. Behavioral Risk Factor Surveillance System [BRFSS] from CDC). So all the code here can be easily adapted for other surveys ;). 
 
 ## Materials & Data
-R Markdown (\*.Rmd)
-Dataset for all countries is available upon request at [DHS](https://dhsprogram.com/data/available-datasets.cfm). For illustration purposes, the complete pipeline (ETL, analysis and Bivariate Kriging) is done over the 2015's Zimbabwe dataset.
+- R Markdown (\*.Rmd)
+- Dataset for all countries is available upon request at [DHS](https://dhsprogram.com/data/available-datasets.cfm). For illustration purposes, the complete pipeline (ETL, analysis and Bivariate Kriging) is done over the 2015's Zimbabwe dataset.
 
 ## Context
 
 Growing travel connectivity and economic development have dramatically increased the magnitude of human mobility in Africa. In public health, vulnerable population groups such as mobile individuals are at an elevated risk of sexually transmitted diseases, including HIV. The population-based Demographic Health Survey data of five Southern African countries with different HIV epidemic intensities (Angola, Malawi, South Africa, Zambia, and Zimbabwe) were used to investigate the association between HIV serostatus and population mobility adjusting for socio-demographic, sexual behavior and spatial covariates. 
-
-
 
 ## Statistical analysis
 
@@ -19,9 +17,11 @@ In summary, I performed a Variance Inflated Factor (VIF) to account for multicol
 
 ## File index
 
-1. Load and ETL
-2. Statistical analysis 
-3. Data 
+1. [Load and ETL]()
+2. [Statistical analysis]()
+3. [Data]()
+Advance topics: 
+4. [Creating new PSU-Strata for combining multiple surveys]()
 
 ## References
 
