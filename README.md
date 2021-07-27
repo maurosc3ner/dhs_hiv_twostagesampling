@@ -18,7 +18,7 @@ In summary, I performed a Variance Inflated Factor (VIF) to account for multicol
 
 1. [Load and ETL]()
 2. [Statistical analysis]()
-3. [Bivariate maps in R]()
+3. [Kriging & bivariate maps in R]()
 
 Advance topics: 
 
