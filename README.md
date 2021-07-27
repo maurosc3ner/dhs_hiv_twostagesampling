@@ -21,6 +21,7 @@ In summary, I performed a Variance Inflated Factor (VIF) to account for multicol
 3. [Data]()
 
 Advance topics: 
+
 4. [Creating new PSU-Strata for combining multiple surveys]()
 
 ## References
