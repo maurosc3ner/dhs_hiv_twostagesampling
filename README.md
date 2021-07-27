@@ -1,8 +1,7 @@
-# dhs_hiv_twostagesampling
-## Performing statistical analysis for HIV data from DHS survey data
+# Performing statistical analysis complex survey data
 
 This repo is intended for a brief summary of all statistical analyses required for the manuscript *Associated health and social determinants of mobile populations across
-HIV epidemic gradients in Southern Africa* (See references)
+HIV epidemic gradients in Southern Africa* (See references). The DHS survey design is a two-stage sampling procedure through a set of defined locations (primary sample units or PSU) statistically weighted to control for sample biases. Complex surveys are not only limited to DHS, several other health institutions also used due to its cost optimization (i.e. Behavioral Risk Factor Surveillance System [BRFSS] from CDC). So all the code here can be easily adapted for other surveys ;).
 
 ## Context
 
@@ -14,7 +13,7 @@ Dataset for all countries is available upon request at [DHS](https://dhsprogram.
 
 ## Study area
 
-The study area focuses on five geographically contiguous countries with differential national HIV prevalence in Southern Africa. In 2019, the prevalence of HIV was 2.0% in Angola, 9.2% in Malawi, 20.0% in South Africa, 11.3% in Zambia, and 12.7% in Zimbabwe. The DHS survey design is a two-stage sampling procedure through a set of defined locations (primary sample units or PSU) statistically weighted to control for sample biases (ICF International 2012).     
+The study area focuses on five geographically contiguous countries with differential national HIV prevalence in Southern Africa. In 2019, the prevalence of HIV was 2.0% in Angola, 9.2% in Malawi, 20.0% in South Africa, 11.3% in Zambia, and 12.7% in Zimbabwe. 
 
 ## Statistical analysis
 
