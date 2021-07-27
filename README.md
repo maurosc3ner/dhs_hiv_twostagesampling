@@ -20,4 +20,4 @@ Conclusions: Our findings highlight the heterogeneity of the social and health d
 
 ## Reference
 
-Esteban Correa-Agudelo, Hae-Young Kim, Godfrey N. Musuka, Zindoga Mukandavire, Adam Akullian, Diego F. Cuadros. Associated health and social determinants of mobile populations across HIV epidemic gradients in Southern Africa. Journal of Migration and Health, Volume 3, 2021, 100038, ISSN 2666-6235, https://doi.org/10.1016/j.jmh.2021.100038.
+- Esteban Correa-Agudelo, Hae-Young Kim, Godfrey N. Musuka, Zindoga Mukandavire, Adam Akullian, Diego F. Cuadros. Associated health and social determinants of mobile populations across HIV epidemic gradients in Southern Africa. Journal of Migration and Health, Volume 3, 2021, 100038, ISSN 2666-6235, https://doi.org/10.1016/j.jmh.2021.100038.
