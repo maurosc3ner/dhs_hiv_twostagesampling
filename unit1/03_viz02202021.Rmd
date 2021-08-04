@@ -1,0 +1,113 @@
+---
+title: "onlyMap"
+author: "Esteban Correa"
+date: "February 6, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+library(rgdal)
+library(tmap)
+library(raster)
+library(classInt)
+library(tidyverse)
+library(cowplot)
+library(leaflet)
+library(leaflet.esri)
+```
+
+
+
+```{r}
+# save.image(file='ZWEBivariate.RData')
+
+load(file ='ZWEBivariate.RData')
+
+```
+
+```{r}
+zLev=6
+mapOptions<-leafletOptions(attributionControl=FALSE,
+                           zoomControl = FALSE,
+                           minZoom =zLev, maxZoom =zLev,
+                           dragging = FALSE)
+
+basemaps <- esriBasemapLayers
+# basemaps
+leafIcons <- icons(
+  iconUrl = "north4.png",
+  iconWidth = 40, iconHeight = 40,
+  iconAnchorX=20, iconAnchorY = 20
+)
+
+legIcon <- icons(
+  iconUrl = "bivLegend.png",
+  iconWidth = 200, iconHeight = 200,
+  iconAnchorX=100, iconAnchorY = 100
+)
+
+legBreaks <- icons(
+  iconUrl = "breaksZWE.png",
+  iconWidth = 430, iconHeight = 58,
+  iconAnchorX=215, iconAnchorY = 29
+)
+invertPal<-T
+selectedPal<-"Spectral" #RdPu   magma   Spectral viridis
+centerLng<-28.5
+centerLat<--19.2
+```
+
+```{r}
+labelLon<-c(33.5,
+            32.7,
+            29.7,
+            29.2,
+            26.4,
+            27.1)
+labelLat<-c(-17.2,
+            -17.6,
+            -20.5,
+            -20.8,
+            -18.9,
+            -19.2)
+
+labels<-c("Mashonaland",
+          "East",
+          "Matabeleland",
+          "South",
+          "Matabeleland",
+          "North")
+
+
+map<-leaflet(options = mapOptions)%>%
+  addProviderTiles(providers$Stamen.TonerLite,
+                   options = providerTileOptions(opacity = 1,
+                                                 detectRetina = TRUE)) %>%
+  
+  
+  addRasterImage(ZWE$lfLayer,project = FALSE,maxBytes =  Inf,
+                 colors = as.vector(col.matrix),opacity = 1
+                )  %>%
+  addPolygons(data=ZWE$ADM1, weight = 1, color="black",opacity = 0.3,fillOpacity = 0.0)%>%
+  addMarkers(lng = centerLng+6.1, lat = centerLat-4, icon = leafIcons) %>%
+  addMarkers(lng = centerLng-5.2, lat = centerLat-3.0, icon = legIcon) %>%
+  # addProviderTiles(providers$Stamen.TonerLines,options = providerTileOptions(opacity = 0.65)) %>%
+  # addProviderTiles(providers$Stamen.TonerLabels) %>%
+  addLabelOnlyMarkers(
+    lng = labelLon, lat =labelLat,
+    label = labels,
+    labelOptions = labelOptions(noHide = T, textOnly = T,
+                                style = list(
+                                  "color" = "black",
+                                  "text-shadow"= "-1px 1px 0px white, 1px 1px 0 white,1px -1px 0 white,-1px -1px 0 white",
+                                  "font-style" = "bold",
+                                  "font-size" = "15px"
+                                  ))) %>%
+  addScaleBar(position = "topright") %>%
+  setView( centerLng,centerLat,zoom = 6)
+
+map
+
+```

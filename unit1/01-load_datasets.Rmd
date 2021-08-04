@@ -1,0 +1,1049 @@
+---
+title: "Logistic Analysis Report for ZWE"
+author: "Esteban Correa"
+date: "November, 2019"
+output: rmarkdown::github_document
+
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE,comment=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE,comment="")
+rm(list = ls())
+library(foreign)
+library(plyr)
+library(dplyr)
+library(survey)
+library(jtools)
+library(kableExtra)
+library(broom)
+library(ggstance)
+# load female, male and hiv records of Zimbabwe
+maleDataFrame <- read.spss("../../ZWMR71SV/ZWMR71FL.SAV")
+hivDataFrame <- read.spss("../../ZWAR71SV/ZWAR71FL.SAV")
+country<-"zwe"
+```
+
+
+
+
+```{r}
+# Extract variables of interest
+maleDataset <- as.data.frame(maleDataFrame$MV001) #clnumber
+maleDataset$MV002 <- maleDataFrame$MV002 # hhnumber
+maleDataset$MV003 <- maleDataFrame$MV003 # linenumber
+maleDataset$MV005 <- maleDataFrame$MV005 # indivweight
+maleDataset$MV012 <- maleDataFrame$MV012 # age
+maleDataset$MV013 <- maleDataFrame$MV013 # agegroup
+maleDataset$MV104 <- maleDataFrame$MV104 # YLivedinResidence
+maleDataset$MV105 <- maleDataFrame$MV105 # previousType
+maleDataset$MV105a <- maleDataFrame$MV105A # previousRegion
+maleDataset$MV106 <- maleDataFrame$MV106 # higher level of education
+maleDataset$MV130 <- maleDataFrame$MV130 # religion
+maleDataset$MV190 <- maleDataFrame$MV190 # Wealthindexcombined
+maleDataset$MV481 <- maleDataFrame$MV481 # covered by health insurance
+maleDataset$MV501 <- maleDataFrame$MV501 # marital status
+maleDataset$sex <- "Male"
+
+#sexual variables
+maleDataset$MV761 <- maleDataFrame$MV761 # used a condom the last time she had sexual intercourse.
+maleDataset$MV763a <- maleDataFrame$MV763A # previous STI 12 
+maleDataset$MV766b <- maleDataFrame$MV766B # number of sex partners including spouse in last 12 months
+maleDataset$MV781 <- maleDataFrame$MV781 # hivtested
+maleDataset$MV836 <- maleDataFrame$MV836 # total lifetime number of sex partners
+
+#geographical variables
+maleDataset$region <- maleDataFrame$MV024 # region
+maleDataset$placeType <- maleDataFrame$MV025 # rural or urban
+maleDataset$MV026 <- maleDataFrame$MV026 # placeLocation
+maleDataset$PSU <- maleDataFrame$MV021 # PSU svydesign
+maleDataset$MV022 <- maleDataFrame$MV022 # Strata sampling error
+
+# rename each column for nemonic purposes
+names(maleDataset) <- c(
+  "clnumber",
+  "hhnumber",
+  "linenumber",
+  "indivweight",
+  "age",
+  "agegroup",
+  "YLivedinResidence",
+  "previousType",
+  "previousRegion",
+  "education",
+  "religion",
+  "Wealthindexcombined",
+  "healthInsured",
+  "maritalStatus",
+  "sex",
+  
+  "condomLastTime",
+  "previousSTI",
+  "sexPartners",
+  "hivtested",
+  "totalSexPartners",
+  
+  "region",
+  "placeType",
+  "placeLocation",
+  "PSU",
+  "V022"
+)
+
+# id for females
+maleDataset$id<-paste(maleDataset$clnumber,
+                      maleDataset$hhnumber,
+                      maleDataset$linenumber,sep="")
+maleDataset$id<-as.numeric(maleDataset$id, 16L)
+maleDataset$id<-sprintf("%010d", maleDataset$id)
+maleDataset<-maleDataset[!(duplicated(maleDataset$id)),]
+```
+
+```{r}
+# Extract variables from HIV
+hivdataset <- as.data.frame(hivDataFrame$HIVCLUST) #clnumber
+hivdataset$HIVNUMB <- hivDataFrame$HIVNUMB # hhnumber
+hivdataset$HIVLINE <- hivDataFrame$HIVLINE # linenumber
+hivdataset$HIV03 <- hivDataFrame$HIV03 # hivStatus
+hivdataset$HIV05 <- hivDataFrame$HIV05 # sample weight
+names(hivdataset) <- c(
+  "clnumber",
+  "hhnumber",
+  "linenumber",
+  "hivStatus",
+  "sampleweight"
+)
+# key for join creation
+hivdataset$id<-paste(hivdataset$clnumber,
+                     hivdataset$hhnumber,
+                     hivdataset$linenumber,sep="")
+hivdataset$id<-as.numeric(hivdataset$id, 16L)
+hivdataset$sampleweight<-hivdataset$sampleweight/1000000
+hivdataset$id<-sprintf("%010d", hivdataset$id)
+hivdataset<-hivdataset[!(duplicated(hivdataset$id)),]
+
+```
+
+
+```{r}
+
+### merge female and hiv
+maleData <- merge(maleDataset, hivdataset, by = "id")
+
+#hivStatus
+maleData$hivStatus<-as.factor(maleData$hivStatus)
+# levels(maleData$hivStatus)
+# table(maleData$hivStatus)
+#remove 9 results in hivStatus
+maleData <-maleData[maleData$hivStatus == "HIV  positive" | maleData$hivStatus == "HIV negative", ]
+maleData$hivStatus<-as.factor(revalue(as.character(maleData$hivStatus), c("HIV  positive" = "hiv+","HIV negative"="hiv-")))
+
+# migstatus
+# table(maleData$YLivedinResidence)
+# summary(maleData$YLivedinResidence)
+maleData<- maleData[maleData$YLivedinResidence != "Visitor", ]  # se remueven visitantes
+maleData$YLivedinResidence[maleData$YLivedinResidence=="Always"]<-maleData$age[maleData$YLivedinResidence=="Always"]
+maleData$YLivedinResidence <- maleData$YLivedinResidence[ , drop=TRUE]
+maleData<-maleData[!is.na(maleData$YLivedinResidence),]
+
+maleData$migstatus<-"2+"
+maleData$migstatus[maleData$YLivedinResidence == 0] <-"0_1y"
+table(maleData$migstatus)
+maleData$migstatus<-as.factor(maleData$migstatus)
+
+# normalize weight
+maleData$indivweight<-maleData$indivweight/1000000
+#check NAs
+maleData<-maleData[!is.na(maleData$indivweight),]
+
+male.mapped.data<-maleData
+
+male.mapped.data<-maleData
+# which(is.na(maleData$migstatus))
+# sum(is.na(maleData$migstatus))
+# apply(maleData, 2, function(x) any(is.na(x)))
+
+
+##### revalues section 
+table(maleData$agegroup)
+maleData$agegroup<-as.factor(revalue(as.character(maleData$agegroup), 
+                                        c("15-19" = "15-24",
+                                          "20-24" = "15-24",
+                                          "25-29" = "25-34",
+                                          "30-34" = "25-34",
+                                          "35-39" = "35-44",
+                                          "40-44" = "35-44",
+                                          "45-49" = "45+",
+                                          "50-54" = "45+",
+                                          "55-59"="45+")))
+table(maleData$agegroup)
+
+
+
+# education
+# table(maleData$education)
+maleData$education<-as.factor(revalue(as.character(maleData$education), 
+                                         c("No education" = "No education/Primary",
+                                           "Primary"="No education/Primary")))
+# religion
+# table(maleData$migstatus,maleData$religion)
+# maleData$religion<-as.factor(revalue(as.character(maleData$religion), c("Roman Catholic" = "Christian",
+#                                                                               "Protestant"="Christian",
+#                                                                               "Pentecostal"="Christian",
+#                                                                               "Apostolic sect"="Christian",
+#                                                                               "Other Christian"="Christian",
+#                                                                               "None"="None/Other",
+#                                                                               "Other"="None/Other"
+# )))
+
+# Wealthindexcombined
+# table(maleData$Wealthindexcombined)
+maleData$Wealthindexcombined<-as.factor(revalue(as.character(maleData$Wealthindexcombined), 
+                                                   c("Poorest" = "Poorer", 
+                                                     "Middle"="Middle/Richer",
+                                                     "Richer"="Middle/Richer",
+                                                     "Richest"="Middle/Richer")))
+table(maleData$Wealthindexcombined)
+
+# health insured
+table(maleData$healthInsured)
+
+# marital status
+# table(maleData$maritalStatus)
+maleData$maritalStatus<-as.factor(revalue(as.character(maleData$maritalStatus), 
+                                             c("Married" = "Married/Living with partner",
+                                               "Living with partner"="Married/Living with partner",
+                                               "Widowed" = "Divorced/separated",
+                                               "Divorced"="Divorced/separated",
+                                               "No longer living together/separated"="Divorced/separated")))
+
+#######################
+# sexual information recode
+#######################
+
+#condon last time
+summary(maleData$condomLastTime)
+maleData<-maleData[!is.na(maleData$condomLastTime),] #*too much NAs
+maleData$condomLastTime <- maleData$condomLastTime[ , drop=TRUE]
+
+# previousSTI
+table(maleData$previousSTI)
+maleData <-maleData[maleData$previousSTI == "No" | maleData$previousSTI == "Yes", ]
+maleData$previousSTI <- maleData$previousSTI[ , drop=TRUE]
+
+## sexPartners
+ summary(maleData$sexPartners)
+maleData<-maleData[!is.na(maleData$sexPartners),]
+maleData <-maleData[maleData$sexPartners != "Don't know" ,]
+maleData <-maleData[maleData$sexPartners != "99", ]
+maleData$sexPartners<-maleData$sexPartners[,drop=TRUE]
+maleData$sexPartners<-as.character(maleData$sexPartners)
+maleData$sexPartners<-as.numeric(maleData$sexPartners)
+maleData$sexPartnersLast12<-"0_1"
+maleData$sexPartnersLast12[maleData$sexPartners > 1]<-"2+"
+maleData$sexPartnersLast12<-as.factor(maleData$sexPartnersLast12)
+table(maleData$sexPartnersLast12)
+
+#hivtested
+table(maleData$hivtested)
+
+# totalSexPartners
+table(maleData$totalSexPartners)
+summary(maleData$totalSexPartners)
+maleData <-maleData[maleData$totalSexPartners != "Don't know" ,]
+maleData$totalSexPartners<-maleData$totalSexPartners[,drop=TRUE]
+maleData$totalSexPartners<-as.factor(revalue(as.character(maleData$totalSexPartners), c("95+" = "95")))
+
+maleData<-maleData[!is.na(maleData$totalSexPartners),]
+
+maleData$totalSexPartners<-as.character(maleData$totalSexPartners)
+maleData$totalSexPartners<-as.numeric(maleData$totalSexPartners)
+maleData$lifetimePartners<-"0_1"
+maleData$lifetimePartners[maleData$totalSexPartners > 1 & maleData$totalSexPartners < 98 ]<-"2+"
+maleData$lifetimePartners<-as.factor(maleData$lifetimePartners)
+table(maleData$lifetimePartners)
+
+```
+
+
+```{r}
+femaleDataFrame <- read.spss("../../ZWIR71SV/ZWIR71FL.SAV")
+# Extract variables of interest
+femaleDataset <- as.data.frame(femaleDataFrame$V001) #clnumber
+femaleDataset$V002 <- femaleDataFrame$V002 # hhnumber
+femaleDataset$V003 <- femaleDataFrame$V003 # linenumber
+femaleDataset$V005 <- femaleDataFrame$V005 # indivweight
+femaleDataset$V012 <- femaleDataFrame$V012 # age
+femaleDataset$V013 <- femaleDataFrame$V013 # agegroup
+femaleDataset$V104 <- femaleDataFrame$V104 # YLivedinResidence
+femaleDataset$V105 <- femaleDataFrame$V105 # previousType
+femaleDataset$V105a <- femaleDataFrame$V105A # previousRegion
+femaleDataset$V106 <- femaleDataFrame$V106 # higher level of education
+femaleDataset$V130 <- femaleDataFrame$V130 # religion
+femaleDataset$V190 <- femaleDataFrame$V190 # Wealthindexcombined
+femaleDataset$V481 <- femaleDataFrame$V481 # covered by health insurance
+femaleDataset$V501 <- femaleDataFrame$V501 # marital status
+femaleDataset$sex <- "Female"
+
+#sexual variables
+femaleDataset$V761 <- femaleDataFrame$V761 # used a condom the last time she had sexual intercourse.
+femaleDataset$V763a <- femaleDataFrame$V763A # previous STI 12 
+femaleDataset$v766b <- femaleDataFrame$V766B # number of sex partners in last 12 months
+femaleDataset$V781 <- femaleDataFrame$V781 # hivtested
+femaleDataset$V836 <- femaleDataFrame$V836 # total lifetime number of sex partners
+
+#geographical variables
+femaleDataset$region <- femaleDataFrame$V024 # region
+femaleDataset$placeType <- femaleDataFrame$V025 # rural or urban
+femaleDataset$V026 <- femaleDataFrame$V026 # placeLocation
+femaleDataset$PSU <- femaleDataFrame$V021 # PSU svydesign
+femaleDataset$V022 <- femaleDataFrame$V022 # Strata sampling error
+
+# rename each column for nemonic purposes
+names(femaleDataset) <- c(
+  "clnumber",
+  "hhnumber",
+  "linenumber",
+  "indivweight",
+  "age",
+  "agegroup",
+  "YLivedinResidence",
+  "previousType",
+  "previousRegion",
+  "education",
+  "religion",
+  "Wealthindexcombined",
+  "healthInsured",
+  "maritalStatus",
+  "sex",
+  
+  "condomLastTime",
+  "previousSTI",
+  "sexPartners",
+  "hivtested",
+  "totalSexPartners",
+  
+  "region",
+  "placeType",
+  "placeLocation",
+  "PSU",
+  "V022"
+)
+
+# id for females
+femaleDataset$id<-paste(femaleDataset$clnumber,
+                        femaleDataset$hhnumber,
+                        femaleDataset$linenumber,sep="")
+femaleDataset$id<-as.numeric(femaleDataset$id, 16L)
+femaleDataset$id<-sprintf("%010d", femaleDataset$id)
+femaleDataset<-femaleDataset[!(duplicated(femaleDataset$id)),]
+```
+
+
+```{r}
+
+### merge female and hiv
+femaleData <- merge(femaleDataset, hivdataset, by = "id")
+
+## hivStatus
+# which(is.na(femaleData$migstatus))
+# sum(is.na(femaleData$migstatus))
+# apply(femaleData, 2, function(x) any(is.na(x)))
+# table(femaleData$hivStatus)
+# levels(femaleData$hivStatus)
+# levels(femaleData$hivStatus)
+# table(femaleData$hivStatus)
+#remove 9 results in hivStatus
+femaleData <-femaleData[femaleData$hivStatus == "HIV  positive" | femaleData$hivStatus == "HIV negative", ]
+femaleData$hivStatus<-as.factor(revalue(as.character(femaleData$hivStatus), c("HIV  positive" = "hiv+","HIV negative"="hiv-")))
+femaleData$hivStatus<-as.factor(femaleData$hivStatus)
+mapped.data<-femaleData
+
+#migStatus
+table(femaleData$YLivedinResidence)
+summary(femaleData$YLivedinResidence)
+femaleData<- femaleData[femaleData$YLivedinResidence != "Visitor", ]  # se remueven visitantes
+femaleData$YLivedinResidence[femaleData$YLivedinResidence=="Always"]<-femaleData$age[femaleData$YLivedinResidence=="Always"]
+femaleData$YLivedinResidence <- femaleData$YLivedinResidence[ , drop=TRUE]
+femaleData<-femaleData[!is.na(femaleData$YLivedinResidence),]
+
+femaleData$migstatus<-"2+"
+femaleData$migstatus[femaleData$YLivedinResidence == 0] <-"0_1y"
+table(femaleData$migstatus)
+#factorize variables
+femaleData$migstatus<-as.factor(femaleData$migstatus)
+
+
+# normalize weight
+femaleData$indivweight<-femaleData$indivweight/1000000
+#check NAs
+femaleData<-femaleData[!is.na(femaleData$indivweight),]
+
+female.mapped.data<-femaleData
+
+##### revalues section 
+table(femaleData$agegroup)
+femaleData$agegroup<-as.factor(revalue(as.character(femaleData$agegroup), 
+                                        c("15-19" = "15-24",
+                                          "20-24" = "15-24",
+                                          "25-29" = "25-34",
+                                          "30-34" = "25-34",
+                                          "35-39" = "35-44",
+                                          "40-44" = "35-44",
+                                          "45-49" = "45+",
+                                          "50-54" = "45+",
+                                          "55-59"="45+")))
+table(femaleData$agegroup)
+
+# education
+# table(femaleData$education)
+femaleData$education<-as.factor(revalue(as.character(femaleData$education), 
+                                         c("No education" = "No education/Primary",
+                                           "Primary"="No education/Primary")))
+
+# religion
+ # table(femaleData$religion)
+# femaleData$religion<-as.factor(revalue(as.character(femaleData$religion), 
+#                                         c("Roman Catholic" = "Christian", 
+#                                           "Protestant"="Christian", 
+#                                           "Pentecostal"="Christian",
+#                                           "Apostolic sect"="Christian",
+#                                           "Other Christian"="Christian",
+#                                           "None"="None/Other",
+#                                           "Other"="None/Other")))
+#wealthindexCombined
+ # table(femaleData$Wealthindexcombined)
+femaleData$Wealthindexcombined<-as.factor(revalue(as.character(femaleData$Wealthindexcombined), 
+                                        c("Poorest" = "Poorer", 
+                                          "Middle"="Middle/Richer",
+                                          "Richer"="Middle/Richer",
+                                          "Richest"="Middle/Richer")))
+table(femaleData$Wealthindexcombined)
+
+# health insured
+table(femaleData$healthInsured)
+
+# marital status
+ # table(femaleData$maritalStatus)
+femaleData$maritalStatus<-as.factor(revalue(as.character(femaleData$maritalStatus), 
+                                             c("Married" = "Married/Living with partner",
+                                               "Living with partner"="Married/Living with partner",
+                                               "Widowed" = "Divorced/separated",
+                                               "Divorced"="Divorced/separated",
+                                               "No longer living together/separated"="Divorced/separated")))
+#######################
+# sexual information recode
+#######################
+#condom last time
+summary(femaleData$condomLastTime)
+femaleData<-femaleData[!is.na(femaleData$condomLastTime),] #*too much NAs
+femaleData$condomLastTime <- femaleData$condomLastTime[ , drop=TRUE]
+ 
+# previousSTI
+table(femaleData$previousSTI)
+femaleData <-femaleData[femaleData$previousSTI == "No" | femaleData$previousSTI == "Yes", ]
+femaleData$previousSTI <- femaleData$previousSTI[ , drop=TRUE]
+
+## sexPartners
+summary(femaleData$sexPartners)
+femaleData <-femaleData[femaleData$sexPartners != "Don't know" ,]
+femaleData <-femaleData[femaleData$sexPartners != "99", ]
+femaleData<-femaleData[!is.na(femaleData$sexPartners),]
+femaleData$sexPartners<-femaleData$sexPartners[,drop=TRUE]
+femaleData$sexPartners<-as.character(femaleData$sexPartners)
+femaleData$sexPartners<-as.numeric(femaleData$sexPartners)
+femaleData$sexPartnersLast12<-"0_1"
+femaleData$sexPartnersLast12[femaleData$sexPartners > 1]<-"2+"
+femaleData$sexPartnersLast12<-as.factor(femaleData$sexPartnersLast12)
+table(femaleData$sexPartnersLast12)
+
+#hivtested
+summary(femaleData$hivtested)
+
+# totalSexPartners
+table(femaleData$totalSexPartners)
+summary(femaleData$totalSexPartners)
+femaleData<-femaleData[!is.na(femaleData$totalSexPartners),]
+femaleData <-femaleData[femaleData$totalSexPartners != "Don't know" ,]
+femaleData$totalSexPartners<-as.factor(revalue(as.character(femaleData$totalSexPartners), c("95+" = "95")))
+femaleData$totalSexPartners<-as.factor(femaleData$totalSexPartners[,drop=TRUE])
+femaleData<-femaleData[!is.na(femaleData$totalSexPartners),]
+femaleData$totalSexPartners<-as.character(femaleData$totalSexPartners)
+femaleData$totalSexPartners<-as.numeric(femaleData$totalSexPartners)
+femaleData$lifetimePartners<-"0_1"
+femaleData$lifetimePartners[femaleData$totalSexPartners > 1 & femaleData$totalSexPartners < 98 ]<-"2+"
+femaleData$lifetimePartners<-as.factor(femaleData$lifetimePartners)
+table(femaleData$lifetimePartners)
+
+
+```
+
+```{r}
+Cov<-read.csv("../../ZWGC72FL/ZWGC72FL.csv")
+
+hist(Cov$Proximity_to_National_Borders)
+Cov$Distance2Borders[Cov$Proximity_to_National_Borders <= 50000 ]<-"50kms"
+Cov$Distance2Borders[Cov$Proximity_to_National_Borders > 50000 & Cov$Proximity_to_National_Borders <= 100000 ]<-"100kms"
+Cov$Distance2Borders[Cov$Proximity_to_National_Borders > 100000 ]<-"100kms+"
+Cov$Distance2Borders<-as.factor(Cov$Distance2Borders)
+table(Cov$Distance2Borders)
+
+hist(Cov$Travel_Times_2015)
+Cov$TravelTime[Cov$Travel_Times_2015 <= 60 ]<-"1hr"
+Cov$TravelTime[Cov$Travel_Times_2015 > 60 & Cov$Travel_Times_2015 <= 120 ]<-"2hrs"
+Cov$TravelTime[Cov$Travel_Times_2015 > 120 ]<-"2hrs+"
+Cov$TravelTime<-as.factor(Cov$TravelTime)
+table(Cov$TravelTime)
+# summary(Cov)
+
+Cov<-Cov%>%
+    dplyr::select(DHSCLUST,
+                  Proximity_to_National_Borders,
+                  Travel_Times_2015,
+                  Distance2Borders,
+                  TravelTime)
+colnames(Cov)<-c("PSU",
+                 "Proximity_to_National_Borders",
+                 "Travel_Times_2015",
+                 "Distance2Borders",
+                 "TravelTimes")
+
+Cov$Travel_Times_2015<-Cov$Travel_Times_2015/60
+Cov$Proximity_to_National_Borders<-Cov$Proximity_to_National_Borders/1000
+```
+
+```{r}
+allZWE<-rbind(femaleData,maleData)
+allZWE <- merge(allZWE, Cov, by = "PSU")
+
+
+
+allZWE$sex<-as.factor(allZWE$sex)
+allZWE$sex<-relevel(allZWE$sex, ref = "Male")
+
+allZWE$sexPartnersLast12<-relevel(allZWE$sexPartnersLast12, ref = "0_1")
+allZWE$condomLastTime<-relevel(allZWE$condomLastTime, ref = "No")
+allZWE$lifetimePartners<-relevel(allZWE$lifetimePartners, ref = "0_1")
+allZWE$maritalStatus<-relevel(allZWE$maritalStatus, ref = "Never in union")
+allZWE$hivStatus<-relevel(allZWE$hivStatus, ref = "hiv-")
+
+#sortering
+allZWE$migstatus<-factor(allZWE$migstatus,levels=c("0_1y", "2+"))
+allZWE$migstatus<-relevel(allZWE$migstatus, ref = "2+")
+allZWE$maritalStatus<-factor(allZWE$maritalStatus, levels=c("Never in union",
+                                                          "Married/Living with partner",
+                                                          "Divorced/separated"))
+allZWE$Distance2Borders<-factor(allZWE$Distance2Borders,c("100kms+","100kms","50kms"))
+levels(allZWE$Distance2Borders)
+allZWE$TravelTimes<-factor(allZWE$TravelTimes,levels=c("2hrs+", "2hrs","1hr"))
+
+allZWE <- allZWE %>%
+    dplyr::select(PSU,
+            V022,
+            sex,
+            age,
+            YLivedinResidence,
+            indivweight,
+            sampleweight,
+            hivStatus,
+            migstatus,
+            agegroup,
+            education,
+            Wealthindexcombined,
+            placeType,
+            maritalStatus,
+            sexPartnersLast12,
+            lifetimePartners,
+            condomLastTime,
+            previousSTI,
+            hivtested,
+            healthInsured,
+            Distance2Borders,
+            TravelTimes,
+            Proximity_to_National_Borders,
+            Travel_Times_2015
+            )
+
+
+options (survey.lonely.psu = "remove")
+dhs1<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE)
+allZWE$hivStatus<-relevel(allZWE$hivStatus, ref = "hiv-")
+
+dhs2<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~sampleweight,
+                 nest=TRUE,
+                 data = allZWE[!is.na(allZWE$sampleweight),])
+allZWE$hivStatus<-relevel(allZWE$hivStatus, ref = "hiv-")
+
+dhsf<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE[allZWE$sex != "Male", ])
+
+dhsm<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE)
+
+dhs1m<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE[allZWE$migstatus != "2+", ])
+
+dhs1nm<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE[allZWE$migstatus != "0_1y", ])
+
+
+```
+
+
+```{r, results="asis"}
+fitall<-svyglm(migstatus~hivStatus+
+              sex+
+              agegroup+
+              education+
+              Wealthindexcombined+
+              healthInsured+
+              maritalStatus+
+              placeType+
+              condomLastTime+
+              previousSTI+
+              hivtested+
+              sexPartnersLast12+
+              lifetimePartners+
+              Distance2Borders+
+              TravelTimes,
+              # Proximity_to_National_Borders+
+              # Travel_Times_2015,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+# summ(fitall, exp = T,confint = TRUE,digits = 3,model.info = T,model.fit = T,vifs = T)
+summ(fitall, exp = T,confint = T,digits = 2,model.info = T,model.fit = T,vifs = T)
+
+fitall<-svyglm(migstatus~hivStatus+
+              sex+
+              agegroup+
+              education+
+              Wealthindexcombined+
+              healthInsured+
+              maritalStatus+
+              placeType+
+              condomLastTime+
+              previousSTI+
+              hivtested+
+              sexPartnersLast12+
+              lifetimePartners+
+              Distance2Borders+
+              TravelTimes,
+              # Proximity_to_National_Borders+
+              # Travel_Times_2015,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs2)
+# summ(fitall, exp = T,confint = TRUE,digits = 3,model.info = T,model.fit = T,vifs = T)
+summ(fitall, exp = T,confint = T,digits = 2,model.info = T,model.fit = T,vifs = T)
+```
+
+
+
+## Unadjusted
+
+```{r, eval=TRUE}
+fitall<-svyglm(migstatus~hivStatus,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)        
+
+fitall<-svyglm(migstatus~sex,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)  
+
+fitall<-svyglm(migstatus~
+              agegroup,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              education,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+# fitall<-svyglm(migstatus~
+#               religion,
+#             data=allZWE,
+#             family=quasibinomial(),
+#             design=dhs1)
+# summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~Wealthindexcombined,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~healthInsured,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~maritalStatus,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~placeType,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+               
+fitall<-svyglm(migstatus~condomLastTime,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              previousSTI,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              hivtested,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              sexPartnersLast12,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              lifetimePartners,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              Distance2Borders,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              TravelTimes,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+```
+
+
+
+# Baseline
+
+
+```{r}
+mymr<-2
+round(svytable(~migstatus, dhs1),1)
+svyttest(migstatus~0, dhs1)
+
+round(prop.table(svytable(~hivStatus+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~hivStatus+migstatus, dhs1), statistic="Chisq")
+
+
+round(prop.table(svytable(~sex+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~sex+migstatus, dhs1), statistic="Chisq")
+
+svyby(~age, ~migstatus, dhs1, svymean, se=T,ci=TRUE,vartype =c("se","ci","cv","cvpct","var"))
+svyboxplot(age~migstatus,dhs1)
+svyttest(age~migstatus,dhs1)
+
+round(prop.table(svytable(~agegroup+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~agegroup+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~education+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~education+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~Wealthindexcombined+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~Wealthindexcombined+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~healthInsured+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~healthInsured+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~maritalStatus+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~maritalStatus+migstatus, dhs1), statistic="Chisq")
+
+# round(svytable(~religion+migstatus, dhs1),1)
+# round(prop.table(svytable(~religion+migstatus, dhs1),margin = mymr),0)*100
+# summary(svytable(~religion+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~placeType+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~placeType+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~condomLastTime+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~condomLastTime+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~previousSTI+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~previousSTI+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~hivtested+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~hivtested+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~sexPartnersLast12+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~sexPartnersLast12+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~lifetimePartners+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~lifetimePartners+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~Distance2Borders+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~Distance2Borders+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~TravelTimes+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~TravelTimes+migstatus, dhs1), statistic="Chisq")
+```
+
+
+```{r}
+mymr<-2
+
+round(svytable(~hivStatus, dhs1m),1)
+
+round(svytable(~sex+hivStatus, dhs1m),1)
+round(prop.table(svytable(~sex+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~sex+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~agegroup+hivStatus, dhs1m),1)
+round(prop.table(svytable(~agegroup+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~agegroup+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~education+hivStatus, dhs1m),1)
+round(prop.table(svytable(~education+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~education+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~Wealthindexcombined+hivStatus, dhs1m),1)
+round(prop.table(svytable(~Wealthindexcombined+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~Wealthindexcombined+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~healthInsured+hivStatus, dhs1m),1)
+round(prop.table(svytable(~healthInsured+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~healthInsured+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~maritalStatus+hivStatus, dhs1m),1)
+round(prop.table(svytable(~maritalStatus+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~maritalStatus+hivStatus, dhs1m), statistic="Chisq")
+
+
+round(svytable(~placeType+hivStatus, dhs1m),1)
+round(prop.table(svytable(~placeType+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~placeType+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~condomLastTime+hivStatus, dhs1m),1)
+round(prop.table(svytable(~condomLastTime+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~condomLastTime+hivStatus, dhs1m), statistic="Chisq")
+
+
+round(svytable(~previousSTI+hivStatus, dhs1m),1)
+round(prop.table(svytable(~previousSTI+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~previousSTI+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~hivtested+hivStatus, dhs1m),1)
+round(prop.table(svytable(~hivtested+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~hivtested+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~sexPartnersLast12+hivStatus, dhs1m),1)
+round(prop.table(svytable(~sexPartnersLast12+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~sexPartnersLast12+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~lifetimePartners+hivStatus, dhs1m),1)
+round(prop.table(svytable(~lifetimePartners+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~lifetimePartners+hivStatus, dhs1m), statistic="Chisq")
+
+```
+
+# Mapping 
+
+```{r}
+all.mapped.data<-rbind(male.mapped.data,female.mapped.data)
+summary(all.mapped.data$migstatus)
+summary(all.mapped.data$hivStatus)
+
+# 0_1y
+table(all.mapped.data$hivStatus,all.mapped.data$migstatus)
+sum(all.mapped.data$indivweight)
+all.mapped.data$m0_1y.hiv<-0
+all.mapped.data$m0_1y.hiv[all.mapped.data$migstatus=="0_1y" & all.mapped.data$hivStatus=="hiv+"]<-1*all.mapped.data$indivweight[all.mapped.data$migstatus=="0_1y" & all.mapped.data$hivStatus=="hiv+"]
+
+all.mapped.data$m0_1y.nonhiv<-0
+all.mapped.data$m0_1y.nonhiv[all.mapped.data$migstatus=="0_1y" & all.mapped.data$hivStatus=="hiv-"]<-1*all.mapped.data$indivweight[all.mapped.data$migstatus=="0_1y" & all.mapped.data$hivStatus=="hiv-"]
+
+# 2+
+all.mapped.data$gt1.hiv<-0
+all.mapped.data$gt1.hiv[all.mapped.data$migstatus=="2+" & all.mapped.data$hivStatus=="hiv+"]<-1*all.mapped.data$indivweight[all.mapped.data$migstatus=="2+" & all.mapped.data$hivStatus=="hiv+"]
+
+all.mapped.data$gt1.nonhiv<-0
+all.mapped.data$gt1.nonhiv[all.mapped.data$migstatus=="2+" & all.mapped.data$hivStatus=="hiv-"]<-1*all.mapped.data$indivweight[all.mapped.data$migstatus=="2+" & all.mapped.data$hivStatus=="hiv-"]
+
+# agregacion por cluster
+all.psu <- as.data.frame.matrix(
+  aggregate(cbind(
+    all.mapped.data$m0_1y.hiv,
+    all.mapped.data$m0_1y.nonhiv,
+    all.mapped.data$gt1.hiv,
+    all.mapped.data$gt1.nonhiv,
+    all.mapped.data$indivweight) ~ all.mapped.data$PSU,
+    FUN = sum, data = all.mapped.data))
+names(all.psu) <- c(
+  "DHSCLUST",
+  "m0_1y_hiv",
+  "m0_1y_nonhiv",
+  "gt1_hiv",
+  "gt1_nonhiv",
+  "total_pop"
+)
+
+factor<-1
+
+# 0_1y
+all.psu$m0_1y_hiv_rate<-factor*all.psu$m0_1y_hiv/all.psu$total_pop # hiv migrants distribution
+
+# gt1
+all.psu$gt1_hiv_rate<-factor*(all.psu$gt1_hiv)/all.psu$total_pop
+sum(all.psu$total_pop)
+
+#all HIV
+all.psu$allm0_1y_rate<-factor*(all.psu$m0_1y_hiv+all.psu$m0_1y_nonhiv)/all.psu$total_pop #all migrants distribution
+all.psu$all_hiv_rate<-factor*(all.psu$m0_1y_hiv+all.psu$gt1_hiv)/all.psu$total_pop #all male hiv distribution
+all.psu$pop_rate<-factor*(all.psu$total_pop)/sum(all.psu$total_pop) #all migrants distribution
+
+write.csv(all.psu, paste0(Sys.Date(),"-zweall.csv"))
+```
+
+```{r, eval=FALSE}
+# 0_1y
+table(male.mapped.data$hivStatus,male.mapped.data$migstatus)
+sum(male.mapped.data$indivweight)
+male.mapped.data$m0_1y.hiv<-0
+male.mapped.data$m0_1y.hiv[male.mapped.data$migstatus=="0_1y" & male.mapped.data$hivStatus=="hiv+"]<-1*male.mapped.data$indivweight[male.mapped.data$migstatus=="0_1y" & male.mapped.data$hivStatus=="hiv+"]
+
+male.mapped.data$m0_1y.nonhiv<-0
+male.mapped.data$m0_1y.nonhiv[male.mapped.data$migstatus=="0_1y" & male.mapped.data$hivStatus=="hiv-"]<-1*male.mapped.data$indivweight[male.mapped.data$migstatus=="0_1y" & male.mapped.data$hivStatus=="hiv-"]
+
+# 2+
+male.mapped.data$gt1.hiv<-0
+male.mapped.data$gt1.hiv[male.mapped.data$migstatus=="2+" & male.mapped.data$hivStatus=="hiv+"]<-1*male.mapped.data$indivweight[male.mapped.data$migstatus=="2+" & male.mapped.data$hivStatus=="hiv+"]
+
+male.mapped.data$gt1.nonhiv<-0
+male.mapped.data$gt1.nonhiv[male.mapped.data$migstatus=="2+" & male.mapped.data$hivStatus=="hiv-"]<-1*male.mapped.data$indivweight[male.mapped.data$migstatus=="2+" & male.mapped.data$hivStatus=="hiv-"]
+
+# agregacion por cluster
+male.psu <- as.data.frame.matrix(
+  aggregate(cbind(
+    male.mapped.data$m0_1y.hiv,
+    male.mapped.data$m0_1y.nonhiv,
+    male.mapped.data$gt1.hiv,
+    male.mapped.data$gt1.nonhiv,
+    male.mapped.data$indivweight) ~ male.mapped.data$PSU,
+    FUN = sum, data = male.mapped.data))
+names(male.psu) <- c(
+  "DHSCLUST",
+  "m0_1y_hiv",
+  "m0_1y_nonhiv",
+  "gt1_hiv",
+  "gt1_nonhiv",
+  "total_pop"
+)
+
+# 0_1y
+male.psu$m0_1y_hiv_rate<-male.psu$m0_1y_hiv/male.psu$total_pop # hiv migrants distribution
+
+# gt1
+male.psu$gt1_hiv_rate<-(male.psu$gt1_hiv)/male.psu$total_pop
+sum(male.psu$total_pop)
+
+#all HIV
+male.psu$allm0_1y_rate<-(male.psu$m0_1y_hiv+male.psu$m0_1y_nonhiv)/male.psu$total_pop #all migrants distribution
+male.psu$all_hiv_rate<-(male.psu$m0_1y_hiv+male.psu$gt1_hiv)/male.psu$total_pop #all male hiv distribution
+
+write.csv(male.psu, paste0(Sys.Date(),"-zwemales.csv"))
+```
+
+
+```{r, eval=FALSE}
+# 0_1y
+table(female.mapped.data$hivStatus,female.mapped.data$migstatus)
+sum(female.mapped.data$indivweight)
+female.mapped.data$m0_1y.hiv<-0
+female.mapped.data$m0_1y.hiv[female.mapped.data$migstatus=="0_1y" & female.mapped.data$hivStatus=="hiv+"]<-1*female.mapped.data$indivweight[female.mapped.data$migstatus=="0_1y" & female.mapped.data$hivStatus=="hiv+"]
+
+female.mapped.data$m0_1y.nonhiv<-0
+female.mapped.data$m0_1y.nonhiv[female.mapped.data$migstatus=="0_1y" & female.mapped.data$hivStatus=="hiv-"]<-1*female.mapped.data$indivweight[female.mapped.data$migstatus=="0_1y" & female.mapped.data$hivStatus=="hiv-"]
+
+# 2+
+female.mapped.data$gt1.hiv<-0
+female.mapped.data$gt1.hiv[female.mapped.data$migstatus=="2+" & female.mapped.data$hivStatus=="hiv+"]<-1*female.mapped.data$indivweight[female.mapped.data$migstatus=="2+" & female.mapped.data$hivStatus=="hiv+"]
+
+female.mapped.data$gt1.nonhiv<-0
+female.mapped.data$gt1.nonhiv[female.mapped.data$migstatus=="2+" & female.mapped.data$hivStatus=="hiv-"]<-1*female.mapped.data$indivweight[female.mapped.data$migstatus=="2+" & female.mapped.data$hivStatus=="hiv-"]
+
+# agregacion por cluster
+female.psu <- as.data.frame.matrix(
+  aggregate(cbind(
+    female.mapped.data$m0_1y.hiv,
+    female.mapped.data$m0_1y.nonhiv,
+    female.mapped.data$gt1.hiv,
+    female.mapped.data$gt1.nonhiv,
+    female.mapped.data$indivweight) ~ female.mapped.data$PSU,
+    FUN = sum, data = female.mapped.data))
+names(female.psu) <- c(
+  "DHSCLUST",
+  "m0_1y_hiv",
+  "m0_1y_nonhiv",
+  "gt1_hiv",
+  "gt1_nonhiv",
+  "total_pop"
+)
+
+# 0_1y
+female.psu$m0_1y_hiv_rate<-female.psu$m0_1y_hiv/female.psu$total_pop # hiv migrants distribution
+
+# gt1
+female.psu$gt1_hiv_rate<-(female.psu$gt1_hiv)/female.psu$total_pop
+sum(female.psu$total_pop)
+
+#all HIV
+female.psu$allm0_1y_rate<-(female.psu$m0_1y_hiv+female.psu$m0_1y_nonhiv)/female.psu$total_pop #all migrants distribution
+female.psu$all_hiv_rate<-(female.psu$m0_1y_hiv+female.psu$gt1_hiv)/female.psu$total_pop #all male hiv distribution
+
+write.csv(female.psu, paste0(Sys.Date(),"-zwefemales.csv"))
+```
+
