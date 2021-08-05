@@ -1,6 +1,18 @@
 # Performing statistical analysis for complex survey data
 
-This repo is intended for a brief illustration of R code required to analyse complex surveys. Due to the lack of documentation, two stage sampling in R is a little bit tricky at the beginning, this guide tries to speed up the learning curve I faced in the past. The DHS data is based on a two-stage sampling procedure through a set of defined locations (primary sample units or PSU per region/province). Those locations are statistically weighted to control for sample biases (specific strate, urban|rural for our case). Complex surveys are not only limited to DHS, several other health institutions around the world also use this procedure due to its cost optimization (i.e. Behavioral Risk Factor Surveillance System [BRFSS] from CDC). So all the code here can be easily adapted for other surveys ;). 
+## Motivation
+
+This repo is intended to illustrate the analysis of complex survey data in R. My motivations comes to the several challenges i faced in the past with this kind of data:
+
+- Lack of documentation
+- Information fragmented in forums (dhsforum, stackstats)
+- Hard to find good datasets
+
+Two stage sampling in R is a little bit tricky at the beginning, so this guide tries to speed up the learning curve I faced in the past. You will find a complete pipeline (ETL, statistical analysis, disease mapping) + some advance topics, everything in one place :).
+
+## Complex surveys
+
+The DHS data is based on a two-stage sampling procedure through a set of defined locations (primary sample units or PSU per region/province). Those locations are statistically weighted to control for sample biases (specific strate, urban|rural for our case). Complex surveys are not only limited to DHS, several other health institutions around the world also use this procedure due to its cost optimization (i.e. Behavioral Risk Factor Surveillance System [BRFSS] from CDC). So all the code here can be easily adapted for other surveys ;). 
 
 ## Materials & Data
 - R and R Markdown (\*.Rmd)
