@@ -569,7 +569,7 @@ We have created several intermediate files, so we proceed to delete all unnecesa
 
 ```{r}
 rm(Cov, femaleData,femaleDataFrame,femaleDataset,hivDataFrame,hivdataset,maleData,maleDataFrame,maleDataset,mapped.data,country)
-save.image("zwe_dataset.RData")
+save.image("../data/zwe_dataset.RData")
 ```
 
 This is the end of the pre-processing stage. We have extracted and processed our data files, including their design sampling information. They are now ready to be used in the statistical analysis.

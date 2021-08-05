@@ -1,0 +1,244 @@
+---
+title: "Unit 2: Statistical analysis for ZWE dataset"
+author: "Esteban Correa"
+date: "November, 2019"
+output: rmarkdown::github_document
+
+---
+
+```{r setup, include=TRUE, echo=TRUE, warning=FALSE,comment=FALSE,message=FALSE}
+rm(list = ls())
+library(foreign)
+library(plyr)
+library(dplyr)
+library(survey)
+library(jtools)
+library(kableExtra)
+library(broom)
+library(ggstance)
+# load female, male and hiv records of Zimbabwe
+load("../data/zwe_dataset.RData")
+summary(allZWE)
+```
+
+# Summary 
+
+Our analysis pipeline can be summarized as follows:
+
+* Create the survey design object 
+* Perform population characteristics for table 1
+* Perform unadjusted analysis 
+* Perform adjusted analysis 
+
+## Create survey design
+
+We create the survey object using survey package from Lumley et al. It requires the ID to identify the PSU, the strata and the individual weights. 
+
+```{r}
+# We need to set this flag, because we do not have variance within psu
+options (survey.lonely.psu = "remove")
+dhs1<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE)
+
+```
+
+## Descriptive statistics
+
+This is one way to create your table 1 manually, however there is another using table1 package. The idea is to create contigency tables per each variable
+
+```{r}
+mymr<-2
+round(svytable(~migstatus, dhs1),1)
+svyttest(migstatus~0, dhs1)
+
+round(prop.table(svytable(~hivStatus+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~hivStatus+migstatus, dhs1), statistic="Chisq")
+
+
+round(prop.table(svytable(~sex+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~sex+migstatus, dhs1), statistic="Chisq")
+
+svyby(~age, ~migstatus, dhs1, svymean, se=T,ci=TRUE,vartype =c("se","ci","cv","cvpct","var"))
+svyboxplot(age~migstatus,dhs1)
+svyttest(age~migstatus,dhs1)
+
+round(prop.table(svytable(~agegroup+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~agegroup+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~education+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~education+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~Wealthindexcombined+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~Wealthindexcombined+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~healthInsured+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~healthInsured+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~maritalStatus+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~maritalStatus+migstatus, dhs1), statistic="Chisq")
+
+# round(svytable(~religion+migstatus, dhs1),1)
+# round(prop.table(svytable(~religion+migstatus, dhs1),margin = mymr),0)*100
+# summary(svytable(~religion+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~placeType+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~placeType+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~condomLastTime+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~condomLastTime+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~previousSTI+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~previousSTI+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~hivtested+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~hivtested+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~sexPartnersLast12+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~sexPartnersLast12+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~lifetimePartners+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~lifetimePartners+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~Distance2Borders+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~Distance2Borders+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~TravelTimes+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~TravelTimes+migstatus, dhs1), statistic="Chisq")
+```
+
+## Unadjusted analysis
+
+```{r, eval=TRUE}
+fitall<-svyglm(migstatus~hivStatus,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)        
+
+fitall<-svyglm(migstatus~sex,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)  
+
+fitall<-svyglm(migstatus~
+              agegroup,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              education,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~Wealthindexcombined,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~healthInsured,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~maritalStatus,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~placeType,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+               
+fitall<-svyglm(migstatus~condomLastTime,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              previousSTI,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              hivtested,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              sexPartnersLast12,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              lifetimePartners,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              Distance2Borders,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              TravelTimes,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+```
+
+## Multivariable analysis
+
+We make use of jtools to extract our beta coefficients in exponential form and with the VIF for multicollinearity checking.
+
+```{r, results="asis"}
+fitall<-svyglm(migstatus~hivStatus+
+              sex+
+              agegroup+
+              education+
+              Wealthindexcombined+
+              healthInsured+
+              maritalStatus+
+              placeType+
+              condomLastTime+
+              previousSTI+
+              hivtested+
+              sexPartnersLast12+
+              lifetimePartners+
+              Distance2Borders+
+              TravelTimes,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = T,digits = 2,model.info = T,model.fit = T,vifs = T)
+
+```
+
+## References
+
+- Thomas Lumley. Complex Surveys: A Guide to Analysis Using R. ISBN: 978-0-470-28430-8. 
