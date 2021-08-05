@@ -14,7 +14,7 @@ Disease mapping is the process of visually depicting geographically indexed data
 
 Now, consider the equation of a best linear unbiased predictor kriging and its covariance:
 
-![](img/3.2.png){width=30%,height=30%}
+![](img/3.2.png){width=30%}
 
 <!-- $$ -->
 <!-- y^{*}(\mu_{o}) = \sum_{\alpha = 1}^{n}w_{\alpha}y(\mu_{\alpha}) -->

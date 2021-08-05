@@ -2,7 +2,7 @@
 
 ## Motivation
 
-This repo is intended to illustrate the analysis of complex survey data in R. My motivations comes to the several challenges i faced in the past with this kind of data:
+This repo is intended to illustrate the analysis of complex survey data in R. My motivation comes to the several challenges i faced in the past with this kind of data:
 
 - Lack of documentation
 - Information fragmented in forums (dhsforum, stackstats)
@@ -36,8 +36,7 @@ In summary, I performed a Variance Inflated Factor (VIF) to account for multicol
 
 Advance topics: 
 
-4. [Creating new PSU-Strata for combining multiple surveys]()
-5. [Post-stratification]()
+4. [Combining multiple surveys and Post-stratification](https://github.com/maurosc3ner/twostagesampling_playground/blob/main/unit4/04-multipleDHS.md)
 
 ## References
 

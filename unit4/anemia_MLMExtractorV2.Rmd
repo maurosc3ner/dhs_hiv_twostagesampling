@@ -1,0 +1,293 @@
+---
+title: "anemia_MLM_v2"
+author: "Esteban Correa"
+date: "7/28/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+library(rgdal)
+library(INLA)
+library(tidyverse)
+library(foreign)
+library(plyr)
+library(survey)
+library(SpatialEpi)
+library(brms)
+library(jtools)
+
+load("../Africa/africaCovariatesVAug2020.RData")
+load("../Africa/ssaSirMapAug.RData")
+femalePop<-read.csv("../data/femalePop/femalePop.csv")
+colnames(femalePop)<-c("GID_0","femalePop")
+```
+
+
+
+```{r}
+
+fullDataset={}
+acum=0
+for(idx in seq_along(africaList)){
+  # print(africaList[[idx]]$country)
+  africaList[[idx]]$IR$GID_0<-africaList[[idx]]$country
+  fullDataset<-rbind(fullDataset,africaList[[idx]]$IR)
+  print(paste(africaList[[idx]]$country,nrow(africaList[[idx]]$IR),sum(africaList[[idx]]$IR$v005)))
+  acum=acum+nrow(africaList[[idx]]$IR)
+}
+# levels(fullDataset$v024_0)
+# summary(fullDataset$v024_0)
+sum(fullDataset$v005)
+# levels(sirMap$dhsRegn)
+
+sirMap<-as.data.frame(sirMap) %>%
+  dplyr::select("RID_0","dhsRegn","Prev","HbS","PfIR","hivPrev","acceCityMin","acceCityHr") 
+sirMap = sirMap[!duplicated(sirMap$dhsRegn),]
+fullDataset<-merge(fullDataset, as.data.frame(sirMap),by.x="v024_0",by.y="dhsRegn")
+tail(fullDataset)
+```
+
+
+
+
+```{r}
+
+
+
+countries<-fullDataset %>% 
+  dplyr::group_by(GID_0) %>% 
+  dplyr::summarise(n_samples=n(),wgt_samples=sum(v005))
+
+# fullDataset<-merge(fullDataset, countries,by.x="GID_0",by.y="GID_0")
+fullDataset<-merge(fullDataset, femalePop,by.x="GID_0",by.y="GID_0",all.x=T)
+
+#de-normalize weights
+# fullDataset$newWeight=(fullDataset$v005/fullDataset$n_samples)*fullDataset$femalePop
+
+fullDataset$new_psu=paste(fullDataset$GID_0,fullDataset$v021)
+fullDataset$new_strata=paste(fullDataset$GID_0,fullDataset$strata)
+
+
+```
+
+no weights no MLM
+
+```{r}
+
+brmsDF<-fullDataset%>% 
+  dplyr::select("GID_0","RID_0","v021","v024_0","v005","v012","v013","anemicFlag","v457_0","v102","v106","v113_1","v190","v190_1","v213","v445_0","v463a_0","m45_1","m60_1_0","strata","Prev","HbS","PfIR","hivPrev","acceCityHr","new_psu","new_strata")
+brmsDF$s.HbS<-scale(brmsDF$HbS,scale = F)
+brmsDF$s.PfIR<-scale(brmsDF$PfIR,scale = F)
+brmsDF$s.hivPrev<-scale(brmsDF$hivPrev,scale = F)
+brmsDF$s.acceCityHr<-scale(brmsDF$acceCityHr,scale = F)
+
+brmsDF$v013<-as.factor(revalue(as.character(brmsDF$v013),
+                               c("50+" = "45+")))
+brmsDF$m45_1_0<-as.factor(revalue(as.character(brmsDF$m45_1),
+                               c("don't know" = NA)))
+brmsDF$PfIR<-brmsDF$PfIR*100
+round(quantile(brmsDF$PfIR,na.rm=T,probs = seq(0,1,1/3)),1)
+round(quantile(brmsDF$hivPrev,na.rm=T,probs = seq(0,1,1/3)),1)
+brmsDF<-brmsDF%>% 
+  dplyr::mutate(PfIRQT = case_when(PfIR <= 14.3 ~ "Low",
+                        PfIR > 14.3 & PfIR <=30.8  ~ "Middle",
+                        PfIR > 30.8 ~ "High",
+                        )) %>% 
+  dplyr::mutate(hivPrevQT = case_when(hivPrev <= 1.1 ~ "Low",
+                        hivPrev > 1.1 & hivPrev <=3.7  ~ "Middle",
+                        hivPrev > 3.7 ~ "High",
+                        ))
+summary(brmsDF$v106)
+brmsDF$v106_0<-as.factor(revalue(as.character(brmsDF$v106),
+                                 c("no education" = "no education",
+                                   "primary" = "primary/secondary",
+                                   "secondary" = "primary/secondary",
+                                   "higher" = "higher")))
+
+brmsDF$v106_0<-factor(brmsDF$v106_0,levels=c("higher","primary/secondary","no education"))
+summary(brmsDF$v106_0)
+
+summary(brmsDF$v190)
+brmsDF$v190_1<-as.factor(revalue(as.character(brmsDF$v190),
+                                 c("poorest" = "poorer/poorest",
+                                   "poorer" = "poorer/poorest",
+                                   "richer" = "richer/richest",
+                                   "richest" = "higher")))
+
+brmsDF$v190_1<-factor(brmsDF$v190_1,levels=c("richer/richest","middle","poorer/poorest"))
+summary(brmsDF$v190_1)
+
+summary(brmsDF$v445_0)
+brmsDF$v445_0<-as.factor(revalue(as.character(brmsDF$v445_0),
+                               c(
+                                 "normal" = "normal/obese",
+                                 "overweight/obese" = "normal/obese")))
+brmsDF$v445_0<-factor(brmsDF$v445_0,levels=c("normal/obese","underweight"))
+summary(brmsDF$v445_0)
+
+
+brmsDF$PfIRQT<-factor(brmsDF$PfIRQT,levels=c("Low","Middle","High"))
+brmsDF$hivPrevQT<-factor(brmsDF$hivPrevQT,levels=c("Low","Middle","High"))
+brmsDF$v190<-factor(brmsDF$v190,levels=c("richest","richer","middle","poorer","poorest"))
+
+summary(brmsDF$v106)
+summary(brmsDF$v190)
+
+# summary(brmsDF$PfIR)
+# summary(brmsDF$PfIRQT)
+# summary(brmsDF$hivPrevQT)
+```
+
+```{r}
+fullDesign <- svydesign( ~ new_psu, 
+                         strata = ~ new_strata ,
+                         data =brmsDF , 
+                         weights = ~ v005 , 
+                         nest = TRUE )
+
+# svyby( ~ hivPrev , ~ GID_0 , fullDesign , svymean )
+# 
+# onlyZaf<-brmsDF%>% 
+#   dplyr::filter(GID_0=='ZAF')
+# 
+# zaf_design<-svydesign( ~ v021, 
+#                          strata = ~ strata ,
+#                          data =onlyZaf , 
+#                          weights = ~ v005 , 
+#                          nest = TRUE )
+# 
+# svymean( ~ hivPrev , zaf_design )
+# sum(onlyZaf$v005)
+```
+
+## Subset
+
+```{r}
+cleanDesign<-subset(fullDesign,!is.na(anemicFlag) 
+                   # & !is.na(v013) 
+                   # & !is.na(v102) 
+                   # & !is.na(v106) 
+                   # & !is.na(v113_1) 
+                   # & !is.na(v190) 
+                   # & !is.na(v445_0) 
+                   # & !is.na(v463a_0)
+                   # & !is.na(m45_1_0) 
+                   # & !is.na(m60_1_0)
+                   # & !is.na(s.HbS) 
+                   # & !is.na(s.PfIR) 
+                   # & !is.na(s.hivPrev) 
+                   # & !is.na(s.acceCityHr)
+                   )
+
+svyby( ~ v457_0, ~ GID_0 , cleanDesign , svymean )
+
+brmsDF2<-as.data.frame(brmsDF) %>% 
+  drop_na()
+countries2<-brmsDF2 %>% 
+  dplyr::group_by(GID_0) %>% 
+  dplyr::summarise(n_samples=n(),wgt_samples=sum(v005))
+onlyZwe<-brmsDF2%>% 
+  dplyr::filter(GID_0=='ZWE')
+
+zwe_design<-svydesign( ~ v021, 
+                         strata = ~ strata ,
+                         data =onlyZwe , 
+                         weights = ~ v005 , 
+                         nest = TRUE )
+
+svymean( ~ hivPrev , zwe_design )
+sum(onlyZwe$v005)
+# rm(africaList,sirMap,femalePop,idx,countries,fullDataset)
+# save.image("julyMLM.Rdata")
+
+```
+
+
+
+logistic 
+
+```{r}
+
+m0.w.svy<-svyglm(v457_0 ~v013+v102+v106+v113_1+v190+v445_0+v463a_0+m45_1_0+m60_1_0+s.HbS + s.PfIR + s.hivPrev + s.acceCityHr, design=fullDesign, family=quasibinomial())
+
+summ(m0.w.svy, exp = T,confint = TRUE,digits = 3)
+
+
+
+```
+
+# NO HbS
+
+```{r}
+m1.w.svy<-svyglm(v457_0 ~v013+v102+v106+v113_1+v190+v445_0+v463a_0+m45_1_0+m60_1_0 + s.PfIR + s.hivPrev + s.acceCityHr, design=fullDesign, family=quasibinomial())
+
+summ(m1.w.svy, exp = T,confint = TRUE,digits = 2)
+
+```
+
+
+```{r}
+# 74639.01 females
+m1.w.clean<-svyglm(v457_0 ~v013+v102+v106+v113_1+v190+v445_0+v463a_0+m45_1_0+m60_1_0 + s.PfIR + s.hivPrev +acceCityHr, design=fullDesign, family=quasibinomial())
+
+summ(m1.w.clean, exp = T,confint = TRUE,digits = 2)
+
+m1.w.clean.QT<-svyglm(v457_0 ~v013+v102+v106+v113_1+v190+v445_0+v463a_0+m45_1_0+m60_1_0 + PfIRQT + hivPrevQT +acceCityHr, design=cleanDesign, family=quasibinomial())
+
+summ(m1.w.clean.QT, exp = T,confint = TRUE,digits = 2)
+
+```
+
+
+
+
+
+# Post stratification
+
+```{r}
+des_postStr <- postStratify( fullDesign , ~ GID_0 , femalePop, partial = T )
+m0.w.svy.pstr<-svyglm(v457_0 ~v013+v102+v106+v113_1+v190+v445_0+v463a_0+m45_1_0+m60_1_0+s.HbS + s.PfIR + s.hivPrev + s.acceCityHr, design=des_postStr, family=quasibinomial())
+
+summ(m0.w.svy.pstr, exp = T,confint = TRUE,digits = 3)
+
+
+```
+
+
+
+```{r}
+m1.w.svy.pstr<-svyglm(v457_0 ~v013+v102+v106+v113_1+v190+v445_0+v463a_0+m45_1_0+m60_1_0 + s.PfIR + s.hivPrev + s.acceCityHr, design=des_postStr, family=quasibinomial())
+
+summ(m1.w.svy.pstr, exp = T,confint = TRUE,digits = 2)
+
+
+```
+ 
+# Post stratification: cleanDesign
+
+```{r}
+clean_postStr <- postStratify( cleanDesign , ~ GID_0 , femalePop, partial = T )
+m3.w.svy.pstr<-svyglm(v457_0 ~v013+v102+v106+v113_1+v190+v445_0+v463a_0+m45_1_0+m60_1_0+ s.PfIR + s.hivPrev + s.acceCityHr, design=clean_postStr, family=quasibinomial())
+
+summ(m3.w.svy.pstr, exp = T,confint = TRUE,digits = 3)
+
+
+```
+
+
+
+```{r}
+a<-svyby(~v457_0,~v013+v102+v106+v113_1+v190+v445_0+v463a_0+m45_1_0+m60_1_0+ s.PfIR + s.hivPrev + s.acceCityHr, fullDesign, svymean, keep.var=TRUE)
+ftable(a)
+print(ftable(a),digits=2)
+```
+
+
+
+```{r}
+rm(africaList,countries,fullDataset,acum,idx,femalePop,fullDesign)
+
+save.image("finalDatasetAug2020.Rdata")
+```
