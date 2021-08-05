@@ -26,7 +26,7 @@ Growing travel connectivity and economic development have dramatically increased
 
 In summary, I performed a Variance Inflated Factor (VIF) to account for multicollinearity. All variables less than five (VIF<5.0) were included in the final adjusted model. Logistic regression models were fitted to assess the association between mobility and the selected covariates. DHS two-stage cluster sampling procedure was considered to correctly estimate sampling errors through all fitted models. Since there is an expectation that the two variables might be related in space (percentage of mobile individuals and HIV prevalence), continuous surface maps of mobile population and HIV prevalence were generated. Each map was normalized and classified with an equal interval scheme. Finally, a bivariate palette was designed to visually depict all possible combinations of the proportion of mobile individuals and HIV prevalence in all countries.
 
-![](img/3.2.png){width=50%}
+![](img/3.2.png| width=50%)
 
 ## File index
 
