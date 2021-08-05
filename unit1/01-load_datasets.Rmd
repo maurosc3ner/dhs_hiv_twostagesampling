@@ -16,7 +16,7 @@ Our ETL pipeline can be summarized as follows:
 
 # Load datasets
 
-For this case, dhs datasets are on SPSS format (*.SAV), but they might come as .DAT or other source type.
+For this case, dhs datasets are on SPSS format (*.SAV), but they might come as .DAT or other source type. I assume here you have the permissions from DHS and all the the files needed. However a pre-processed files is provided in the ~./data directory in RData format.
 
 ```{r setup, include=TRUE, echo=TRUE, warning=FALSE,comment=FALSE,message=FALSE}
 rm(list = ls())
@@ -28,10 +28,12 @@ library(jtools)
 library(kableExtra)
 library(broom)
 library(ggstance)
+library(rgdal)
 # load female, male and hiv records of Zimbabwe 2015 dataset
 maleDataFrame <- read.spss("../../ZWMR71SV/ZWMR71FL.SAV")
 hivDataFrame <- read.spss("../../ZWAR71SV/ZWAR71FL.SAV")
 femaleDataFrame <- read.spss("../../ZWIR71SV/ZWIR71FL.SAV")
+gpsData<-readOGR("../../ZWGE72FL_GPS","ZWGE72FL")
 ```
 
 ## Extract HIV variables

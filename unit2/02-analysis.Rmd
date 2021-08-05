@@ -6,6 +6,19 @@ output: rmarkdown::github_document
 
 ---
 
+# Summary 
+
+Our analysis pipeline can be summarized as follows:
+
+* Create the survey design object 
+* Perform population characteristics for table 1
+* Perform unadjusted analysis 
+* Perform adjusted analysis 
+
+# Load datasets
+
+Let's load our prepared dataset
+
 ```{r setup, include=TRUE, echo=TRUE, warning=FALSE,comment=FALSE,message=FALSE}
 rm(list = ls())
 library(foreign)
@@ -20,15 +33,6 @@ library(ggstance)
 load("../data/zwe_dataset.RData")
 summary(allZWE)
 ```
-
-# Summary 
-
-Our analysis pipeline can be summarized as follows:
-
-* Create the survey design object 
-* Perform population characteristics for table 1
-* Perform unadjusted analysis 
-* Perform adjusted analysis 
 
 ## Create survey design
 

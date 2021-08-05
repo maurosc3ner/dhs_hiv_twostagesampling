@@ -3,7 +3,7 @@
 This repo is intended for a brief illustration of R code required to analyse complex surveys. Due to the lack of documentation, two stage sampling in R is a little bit tricky at the beginning, this guide tries to speed up the learning curve I faced in the past. The DHS data is based on a two-stage sampling procedure through a set of defined locations (primary sample units or PSU per region/province). Those locations are statistically weighted to control for sample biases (specific strate, urban|rural for our case). Complex surveys are not only limited to DHS, several other health institutions around the world also use this procedure due to its cost optimization (i.e. Behavioral Risk Factor Surveillance System [BRFSS] from CDC). So all the code here can be easily adapted for other surveys ;). 
 
 ## Materials & Data
-- R Markdown (\*.Rmd)
+- R and R Markdown (\*.Rmd)
 - Dataset for all countries is available upon request at [DHS](https://dhsprogram.com/data/available-datasets.cfm). For illustration purposes, the complete pipeline (ETL, analysis and Bivariate Kriging) is done over the 2015's Zimbabwe dataset.
 
 ## Context
@@ -18,11 +18,12 @@ In summary, I performed a Variance Inflated Factor (VIF) to account for multicol
 
 1. [Load and ETL](https://github.com/maurosc3ner/twostagesampling_playground/blob/main/unit1/01-load_datasets.md)
 2. [Statistical analysis](https://github.com/maurosc3ner/twostagesampling_playground/blob/main/unit2/02-analysis.md)
-3. [Kriging & bivariate maps in R]()
+3. [Kriging & bivariate maps in R](https://github.com/maurosc3ner/twostagesampling_playground/blob/main/unit3/03-kriging-bivariate.md)
 
 Advance topics: 
 
 4. [Creating new PSU-Strata for combining multiple surveys]()
+5. [Post-stratification]()
 
 ## References
 
