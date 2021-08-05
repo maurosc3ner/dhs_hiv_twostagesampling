@@ -1,24 +1,13 @@
 ---
-title: "Unit 1: Load and transform ZWE dataset"
+title: "Logistic Analysis Report for ZWE"
 author: "Esteban Correa"
 date: "November, 2019"
 output: rmarkdown::github_document
+
 ---
 
-# Summary 
-
-Our ETL pipeline can be summarized as follows:
-
-* Load datasets and extract variables of interest for the analysis
-* Filter some unwanted individuals
-* Perform some value recodes
-* Create final files and export them
-
-# Load datasets
-
-For this case, dhs datasets are on SPSS format (*.SAV), but they might come as .DAT or other source type.
-
-```{r setup, include=TRUE, echo=TRUE, warning=FALSE,comment=FALSE,message=FALSE}
+```{r setup, include=FALSE, echo=TRUE, warning=FALSE,comment=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE,comment="")
 rm(list = ls())
 library(foreign)
 library(plyr)
@@ -28,17 +17,20 @@ library(jtools)
 library(kableExtra)
 library(broom)
 library(ggstance)
-# load female, male and hiv records of Zimbabwe 2015 dataset
+# load female, male and hiv records of Zimbabwe
 maleDataFrame <- read.spss("../../ZWMR71SV/ZWMR71FL.SAV")
 hivDataFrame <- read.spss("../../ZWAR71SV/ZWAR71FL.SAV")
-femaleDataFrame <- read.spss("../../ZWIR71SV/ZWIR71FL.SAV")
+country<-"zwe"
 ```
 
-## Extract HIV variables
+# Load
+
+## Load HIV 
 
 Load the HIV dataset that we will join to male and female datasets
 
 ```{r}
+
 hivdataset <- as.data.frame(hivDataFrame$HIVCLUST) #clnumber
 hivdataset$HIVNUMB <- hivDataFrame$HIVNUMB # hhnumber
 hivdataset$HIVLINE <- hivDataFrame$HIVLINE # linenumber
@@ -62,9 +54,8 @@ hivdataset$id<-sprintf("%010d", hivdataset$id)
 hivdataset<-hivdataset[!(duplicated(hivdataset$id)),]
 ```
 
-## Extract male variables
 
-These are the variables used in the paper (demographics+sexual covariates+design sampling information). You can use other variables but you can not omit design sampling variables to account for the two stage sampling.
+## Load and extract male variables
 
 ```{r}
 maleDataset <- as.data.frame(maleDataFrame$MV001) #clnumber
@@ -137,9 +128,8 @@ maleDataset$id<-sprintf("%010d", maleDataset$id)
 maleDataset<-maleDataset[!(duplicated(maleDataset$id)),]
 ```
 
-## Join HIV to male dataset
 
-Having the extracted variables, it is time to join the HIV information using individual's ID. Then we can recode some variables for our analysis.
+## Join HIV to male dataset
 
 ```{r}
 
@@ -271,9 +261,10 @@ table(maleData$lifetimePartners)
 
 ```
 
-## Extract female variables
+## Load and extract female variables
 
 ```{r}
+femaleDataFrame <- read.spss("../../ZWIR71SV/ZWIR71FL.SAV")
 # Extract variables of interest
 femaleDataset <- as.data.frame(femaleDataFrame$V001) #clnumber
 femaleDataset$V002 <- femaleDataFrame$V002 # hhnumber
@@ -364,11 +355,12 @@ femaleData <- merge(femaleDataset, hivdataset, by = "id")
 femaleData <-femaleData[femaleData$hivStatus == "HIV  positive" | femaleData$hivStatus == "HIV negative", ]
 femaleData$hivStatus<-as.factor(revalue(as.character(femaleData$hivStatus), c("HIV  positive" = "hiv+","HIV negative"="hiv-")))
 femaleData$hivStatus<-as.factor(femaleData$hivStatus)
+mapped.data<-femaleData
 
 #migStatus
 table(femaleData$YLivedinResidence)
 summary(femaleData$YLivedinResidence)
-femaleData<- femaleData[femaleData$YLivedinResidence != "Visitor", ]  # we remove visitors
+femaleData<- femaleData[femaleData$YLivedinResidence != "Visitor", ]  # se remueven visitantes
 femaleData$YLivedinResidence[femaleData$YLivedinResidence=="Always"]<-femaleData$age[femaleData$YLivedinResidence=="Always"]
 femaleData$YLivedinResidence <- femaleData$YLivedinResidence[ , drop=TRUE]
 femaleData<-femaleData[!is.na(femaleData$YLivedinResidence),]
@@ -474,8 +466,6 @@ table(femaleData$lifetimePartners)
 
 ## Load psu-level variables
 
-We are interested in geodesic distance to national borders and travel time to nearest city.
-
 ```{r}
 Cov<-read.csv("../../ZWGC72FL/ZWGC72FL.csv")
 
@@ -561,15 +551,337 @@ allZWE <- allZWE %>%
             Proximity_to_National_Borders,
             Travel_Times_2015
             )
+
+
+
+
+
 ```
 
-## Prepare final files
 
-We have created several intermediate files, so we proceed to delete all unnecesary variables for the final dataset.
 
 ```{r}
-rm(Cov, femaleData,femaleDataFrame,femaleDataset,hivDataFrame,hivdataset,maleData,maleDataFrame,maleDataset,mapped.data,country)
-save.image("zwe_dataset.RData")
+options (survey.lonely.psu = "remove")
+dhs1<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE)
+allZWE$hivStatus<-relevel(allZWE$hivStatus, ref = "hiv-")
+
+dhs2<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~sampleweight,
+                 nest=TRUE,
+                 data = allZWE[!is.na(allZWE$sampleweight),])
+allZWE$hivStatus<-relevel(allZWE$hivStatus, ref = "hiv-")
+
+dhsf<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE[allZWE$sex != "Male", ])
+
+dhsm<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE)
+
+dhs1m<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE[allZWE$migstatus != "2+", ])
+
+dhs1nm<- svydesign(id = ~PSU, 
+                 strata = ~V022,
+                 weights = ~indivweight,
+                 nest=TRUE,
+                 data = allZWE[allZWE$migstatus != "0_1y", ])
 ```
 
-This is the end of the pre-processing stage. We have extracted and processed our data files, including their design sampling information. They are now ready to be used in the statistical analysis.
+
+```{r, results="asis"}
+fitall<-svyglm(migstatus~hivStatus+
+              sex+
+              agegroup+
+              education+
+              Wealthindexcombined+
+              healthInsured+
+              maritalStatus+
+              placeType+
+              condomLastTime+
+              previousSTI+
+              hivtested+
+              sexPartnersLast12+
+              lifetimePartners+
+              Distance2Borders+
+              TravelTimes,
+              # Proximity_to_National_Borders+
+              # Travel_Times_2015,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+# summ(fitall, exp = T,confint = TRUE,digits = 3,model.info = T,model.fit = T,vifs = T)
+summ(fitall, exp = T,confint = T,digits = 2,model.info = T,model.fit = T,vifs = T)
+
+fitall<-svyglm(migstatus~hivStatus+
+              sex+
+              agegroup+
+              education+
+              Wealthindexcombined+
+              healthInsured+
+              maritalStatus+
+              placeType+
+              condomLastTime+
+              previousSTI+
+              hivtested+
+              sexPartnersLast12+
+              lifetimePartners+
+              Distance2Borders+
+              TravelTimes,
+              # Proximity_to_National_Borders+
+              # Travel_Times_2015,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs2)
+# summ(fitall, exp = T,confint = TRUE,digits = 3,model.info = T,model.fit = T,vifs = T)
+summ(fitall, exp = T,confint = T,digits = 2,model.info = T,model.fit = T,vifs = T)
+```
+
+
+
+## Unadjusted
+
+```{r, eval=TRUE}
+fitall<-svyglm(migstatus~hivStatus,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)        
+
+fitall<-svyglm(migstatus~sex,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)  
+
+fitall<-svyglm(migstatus~
+              agegroup,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              education,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+# fitall<-svyglm(migstatus~
+#               religion,
+#             data=allZWE,
+#             family=quasibinomial(),
+#             design=dhs1)
+# summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~Wealthindexcombined,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~healthInsured,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~maritalStatus,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~placeType,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+               
+fitall<-svyglm(migstatus~condomLastTime,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              previousSTI,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              hivtested,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              sexPartnersLast12,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              lifetimePartners,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              Distance2Borders,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+fitall<-svyglm(migstatus~
+              TravelTimes,
+            data=allZWE,
+            family=quasibinomial(),
+            design=dhs1)
+summ(fitall, exp = T,confint = TRUE,digits = 2)
+
+```
+
+
+
+# Baseline
+
+
+```{r}
+mymr<-2
+round(svytable(~migstatus, dhs1),1)
+svyttest(migstatus~0, dhs1)
+
+round(prop.table(svytable(~hivStatus+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~hivStatus+migstatus, dhs1), statistic="Chisq")
+
+
+round(prop.table(svytable(~sex+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~sex+migstatus, dhs1), statistic="Chisq")
+
+svyby(~age, ~migstatus, dhs1, svymean, se=T,ci=TRUE,vartype =c("se","ci","cv","cvpct","var"))
+svyboxplot(age~migstatus,dhs1)
+svyttest(age~migstatus,dhs1)
+
+round(prop.table(svytable(~agegroup+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~agegroup+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~education+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~education+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~Wealthindexcombined+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~Wealthindexcombined+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~healthInsured+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~healthInsured+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~maritalStatus+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~maritalStatus+migstatus, dhs1), statistic="Chisq")
+
+# round(svytable(~religion+migstatus, dhs1),1)
+# round(prop.table(svytable(~religion+migstatus, dhs1),margin = mymr),0)*100
+# summary(svytable(~religion+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~placeType+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~placeType+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~condomLastTime+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~condomLastTime+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~previousSTI+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~previousSTI+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~hivtested+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~hivtested+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~sexPartnersLast12+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~sexPartnersLast12+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~lifetimePartners+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~lifetimePartners+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~Distance2Borders+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~Distance2Borders+migstatus, dhs1), statistic="Chisq")
+
+round(prop.table(svytable(~TravelTimes+migstatus, dhs1),margin = mymr)*100,0)
+summary(svytable(~TravelTimes+migstatus, dhs1), statistic="Chisq")
+```
+
+
+```{r}
+mymr<-2
+
+round(svytable(~hivStatus, dhs1m),1)
+
+round(svytable(~sex+hivStatus, dhs1m),1)
+round(prop.table(svytable(~sex+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~sex+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~agegroup+hivStatus, dhs1m),1)
+round(prop.table(svytable(~agegroup+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~agegroup+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~education+hivStatus, dhs1m),1)
+round(prop.table(svytable(~education+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~education+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~Wealthindexcombined+hivStatus, dhs1m),1)
+round(prop.table(svytable(~Wealthindexcombined+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~Wealthindexcombined+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~healthInsured+hivStatus, dhs1m),1)
+round(prop.table(svytable(~healthInsured+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~healthInsured+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~maritalStatus+hivStatus, dhs1m),1)
+round(prop.table(svytable(~maritalStatus+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~maritalStatus+hivStatus, dhs1m), statistic="Chisq")
+
+
+round(svytable(~placeType+hivStatus, dhs1m),1)
+round(prop.table(svytable(~placeType+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~placeType+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~condomLastTime+hivStatus, dhs1m),1)
+round(prop.table(svytable(~condomLastTime+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~condomLastTime+hivStatus, dhs1m), statistic="Chisq")
+
+
+round(svytable(~previousSTI+hivStatus, dhs1m),1)
+round(prop.table(svytable(~previousSTI+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~previousSTI+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~hivtested+hivStatus, dhs1m),1)
+round(prop.table(svytable(~hivtested+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~hivtested+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~sexPartnersLast12+hivStatus, dhs1m),1)
+round(prop.table(svytable(~sexPartnersLast12+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~sexPartnersLast12+hivStatus, dhs1m), statistic="Chisq")
+
+round(svytable(~lifetimePartners+hivStatus, dhs1m),1)
+round(prop.table(svytable(~lifetimePartners+hivStatus, dhs1m),margin = mymr),3)*100
+summary(svytable(~lifetimePartners+hivStatus, dhs1m), statistic="Chisq")
+
+```
+

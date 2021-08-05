@@ -1,4271 +1,893 @@
-Logistic Analysis Report for ZWE
+Unit 1: Load and transform ZWE dataset
 ================
 Esteban Correa
 November, 2019
 
+# Summary
 
-    0_1y   2+ 
-     506 6679 
+Our ETL pipeline can be summarized as follows:
+
+-   Load datasets and extract variables of interest for the analysis
+-   Filter some unwanted individuals
+-   Perform some value recodes
+-   Create final files and export them
+
+# Load datasets
+
+For this case, dhs datasets are on SPSS format (\*.SAV), but they might
+come as .DAT or other source type.
+
+``` r
+rm(list = ls())
+library(foreign)
+library(plyr)
+library(dplyr)
+library(survey)
+library(jtools)
+library(kableExtra)
+library(broom)
+library(ggstance)
+# load female, male and hiv records of Zimbabwe 2015 dataset
+maleDataFrame <- read.spss("../../ZWMR71SV/ZWMR71FL.SAV")
+hivDataFrame <- read.spss("../../ZWAR71SV/ZWAR71FL.SAV")
+femaleDataFrame <- read.spss("../../ZWIR71SV/ZWIR71FL.SAV")
+```
+
+## Extract HIV variables
+
+Load the HIV dataset that we will join to male and female datasets
+
+``` r
+hivdataset <- as.data.frame(hivDataFrame$HIVCLUST) #clnumber
+hivdataset$HIVNUMB <- hivDataFrame$HIVNUMB # hhnumber
+hivdataset$HIVLINE <- hivDataFrame$HIVLINE # linenumber
+hivdataset$HIV03 <- hivDataFrame$HIV03 # hivStatus
+hivdataset$HIV05 <- hivDataFrame$HIV05 # sample weight
+names(hivdataset) <- c(
+  "clnumber",
+  "hhnumber",
+  "linenumber",
+  "hivStatus",
+  "sampleweight"
+)
+# key for join creation
+hivdataset$id<-paste(hivdataset$clnumber,
+                     hivdataset$hhnumber,
+                     hivdataset$linenumber,sep="")
+hivdataset$id<-as.numeric(hivdataset$id, 16L)
+hivdataset$sampleweight<-hivdataset$sampleweight/1000000
+#this left padding helps to assure uniqueness in the key
+hivdataset$id<-sprintf("%010d", hivdataset$id)
+hivdataset<-hivdataset[!(duplicated(hivdataset$id)),]
+```
+
+## Extract male variables
+
+These are the variables used in the paper (demographics+sexual
+covariates+design sampling information). You can use other variables but
+you can not omit design sampling variables to account for the two stage
+sampling.
+
+``` r
+maleDataset <- as.data.frame(maleDataFrame$MV001) #clnumber
+maleDataset$MV002 <- maleDataFrame$MV002 # hhnumber
+maleDataset$MV003 <- maleDataFrame$MV003 # linenumber
+maleDataset$MV005 <- maleDataFrame$MV005 # indivweight
+maleDataset$MV012 <- maleDataFrame$MV012 # age
+maleDataset$MV013 <- maleDataFrame$MV013 # agegroup
+maleDataset$MV104 <- maleDataFrame$MV104 # YLivedinResidence
+maleDataset$MV105 <- maleDataFrame$MV105 # previousType
+maleDataset$MV105a <- maleDataFrame$MV105A # previousRegion
+maleDataset$MV106 <- maleDataFrame$MV106 # higher level of education
+maleDataset$MV130 <- maleDataFrame$MV130 # religion
+maleDataset$MV190 <- maleDataFrame$MV190 # Wealthindexcombined
+maleDataset$MV481 <- maleDataFrame$MV481 # covered by health insurance
+maleDataset$MV501 <- maleDataFrame$MV501 # marital status
+maleDataset$sex <- "Male"
+
+#sexual variables
+maleDataset$MV761 <- maleDataFrame$MV761 # used a condom the last time she had sexual intercourse.
+maleDataset$MV763a <- maleDataFrame$MV763A # previous STI 12 
+maleDataset$MV766b <- maleDataFrame$MV766B # number of sex partners including spouse in last 12 months
+maleDataset$MV781 <- maleDataFrame$MV781 # hivtested
+maleDataset$MV836 <- maleDataFrame$MV836 # total lifetime number of sex partners
+
+#geographical variables
+maleDataset$region <- maleDataFrame$MV024 # region
+maleDataset$placeType <- maleDataFrame$MV025 # rural or urban
+maleDataset$MV026 <- maleDataFrame$MV026 # placeLocation
+maleDataset$PSU <- maleDataFrame$MV021 # PSU svydesign
+maleDataset$MV022 <- maleDataFrame$MV022 # Strata sampling error
+
+# rename each column for nemonic purposes
+names(maleDataset) <- c(
+  "clnumber",
+  "hhnumber",
+  "linenumber",
+  "indivweight",
+  "age",
+  "agegroup",
+  "YLivedinResidence",
+  "previousType",
+  "previousRegion",
+  "education",
+  "religion",
+  "Wealthindexcombined",
+  "healthInsured",
+  "maritalStatus",
+  "sex",
+  
+  "condomLastTime",
+  "previousSTI",
+  "sexPartners",
+  "hivtested",
+  "totalSexPartners",
+  
+  "region",
+  "placeType",
+  "placeLocation",
+  "PSU",
+  "V022"
+)
+
+# id for females
+maleDataset$id<-paste(maleDataset$clnumber,
+                      maleDataset$hhnumber,
+                      maleDataset$linenumber,sep="")
+maleDataset$id<-as.numeric(maleDataset$id, 16L)
+maleDataset$id<-sprintf("%010d", maleDataset$id)
+maleDataset<-maleDataset[!(duplicated(maleDataset$id)),]
+```
+
+## Join HIV to male dataset
+
+Having the extracted variables, it is time to join the HIV information
+using individual’s ID. Then we can recode some variables for our
+analysis.
+
+``` r
+### merge male and hiv
+maleData <- merge(maleDataset, hivdataset, by = "id")
+
+#hivStatus
+maleData$hivStatus<-as.factor(maleData$hivStatus)
+# levels(maleData$hivStatus)
+# table(maleData$hivStatus)
+#remove 9 results in hivStatus
+maleData <-maleData[maleData$hivStatus == "HIV  positive" | maleData$hivStatus == "HIV negative", ]
+maleData$hivStatus<-as.factor(revalue(as.character(maleData$hivStatus), c("HIV  positive" = "hiv+","HIV negative"="hiv-")))
+
+# migstatus
+# table(maleData$YLivedinResidence)
+# summary(maleData$YLivedinResidence)
+maleData<- maleData[maleData$YLivedinResidence != "Visitor", ]  # se remueven visitantes
+maleData$YLivedinResidence[maleData$YLivedinResidence=="Always"]<-maleData$age[maleData$YLivedinResidence=="Always"]
+```
+
+    ## Warning in `[<-.factor`(`*tmp*`, maleData$YLivedinResidence == "Always", :
+    ## invalid factor level, NA generated
+
+``` r
+maleData$YLivedinResidence <- maleData$YLivedinResidence[ , drop=TRUE]
+maleData<-maleData[!is.na(maleData$YLivedinResidence),]
+
+maleData$migstatus<-"2+"
+maleData$migstatus[maleData$YLivedinResidence == 0] <-"0_1y"
+table(maleData$migstatus)
+```
+
+    ## 
+    ## 0_1y   2+ 
+    ##  506 6679
+
+``` r
+maleData$migstatus<-as.factor(maleData$migstatus)
+
+# normalize weight
+maleData$indivweight<-maleData$indivweight/1000000
+#check NAs
+maleData<-maleData[!is.na(maleData$indivweight),]
+
+male.mapped.data<-maleData
+
+male.mapped.data<-maleData
+# which(is.na(maleData$migstatus))
+# sum(is.na(maleData$migstatus))
+# apply(maleData, 2, function(x) any(is.na(x)))
 
 
-    15-19 20-24 25-29 30-34 35-39 40-44 45-49 50-54 55-59 60-64 
-     1859  1200   983   944   786   678   438   297     0     0 
+##### revalues section 
+table(maleData$agegroup)
+```
 
-    The following `from` values were not present in `x`: 55-59
+    ## 
+    ## 15-19 20-24 25-29 30-34 35-39 40-44 45-49 50-54 55-59 60-64 
+    ##  1859  1200   983   944   786   678   438   297     0     0
+
+``` r
+maleData$agegroup<-as.factor(revalue(as.character(maleData$agegroup), 
+                                        c("15-19" = "15-24",
+                                          "20-24" = "15-24",
+                                          "25-29" = "25-34",
+                                          "30-34" = "25-34",
+                                          "35-39" = "35-44",
+                                          "40-44" = "35-44",
+                                          "45-49" = "45+",
+                                          "50-54" = "45+",
+                                          "55-59"="45+")))
+```
+
+    ## The following `from` values were not present in `x`: 55-59
+
+``` r
+table(maleData$agegroup)
+```
+
+    ## 
+    ## 15-24 25-34 35-44   45+ 
+    ##  3059  1927  1464   735
+
+``` r
+# education
+# table(maleData$education)
+maleData$education<-as.factor(revalue(as.character(maleData$education), 
+                                         c("No education" = "No education/Primary",
+                                           "Primary"="No education/Primary")))
+
+# Wealthindexcombined
+# table(maleData$Wealthindexcombined)
+maleData$Wealthindexcombined<-as.factor(revalue(as.character(maleData$Wealthindexcombined), 
+                                                   c("Poorest" = "Poorer", 
+                                                     "Middle"="Middle/Richer",
+                                                     "Richer"="Middle/Richer",
+                                                     "Richest"="Middle/Richer")))
+table(maleData$Wealthindexcombined)
+```
+
+    ## 
+    ## Middle/Richer        Poorer 
+    ##          4960          2225
+
+``` r
+# health insured
+table(maleData$healthInsured)
+```
+
+    ## 
+    ##   No  Yes 
+    ## 6290  895
+
+``` r
+# marital status
+# table(maleData$maritalStatus)
+maleData$maritalStatus<-as.factor(revalue(as.character(maleData$maritalStatus), 
+                                             c("Married" = "Married/Living with partner",
+                                               "Living with partner"="Married/Living with partner",
+                                               "Widowed" = "Divorced/separated",
+                                               "Divorced"="Divorced/separated",
+                                               "No longer living together/separated"="Divorced/separated")))
+
+#######################
+# sexual information recode
+#######################
+
+#condon last time
+summary(maleData$condomLastTime)
+```
+
+    ##         No        Yes Don't know       NA's 
+    ##       3432       1621          0       2132
+
+``` r
+maleData<-maleData[!is.na(maleData$condomLastTime),] #*too much NAs
+maleData$condomLastTime <- maleData$condomLastTime[ , drop=TRUE]
+
+# previousSTI
+table(maleData$previousSTI)
+```
+
+    ## 
+    ##         No        Yes Don't know 
+    ##       4895        152          6
+
+``` r
+maleData <-maleData[maleData$previousSTI == "No" | maleData$previousSTI == "Yes", ]
+maleData$previousSTI <- maleData$previousSTI[ , drop=TRUE]
+
+## sexPartners
+ summary(maleData$sexPartners)
+```
+
+    ##          0          1         10         11         12         13         15 
+    ##          0       4036          4          3          1          1          3 
+    ##         18          2         20         28          3         30          4 
+    ##          1        861          2          1         70          1         29 
+    ##          5          6          7          8          9         95 Don't know 
+    ##         14          7          1          6          3          1          2 
+    ##         99 
+    ##          0
+
+``` r
+maleData<-maleData[!is.na(maleData$sexPartners),]
+maleData <-maleData[maleData$sexPartners != "Don't know" ,]
+maleData <-maleData[maleData$sexPartners != "99", ]
+maleData$sexPartners<-maleData$sexPartners[,drop=TRUE]
+maleData$sexPartners<-as.character(maleData$sexPartners)
+maleData$sexPartners<-as.numeric(maleData$sexPartners)
+maleData$sexPartnersLast12<-"0_1"
+maleData$sexPartnersLast12[maleData$sexPartners > 1]<-"2+"
+maleData$sexPartnersLast12<-as.factor(maleData$sexPartnersLast12)
+table(maleData$sexPartnersLast12)
+```
+
+    ## 
+    ##  0_1   2+ 
+    ## 4036 1009
+
+``` r
+#hivtested
+table(maleData$hivtested)
+```
+
+    ## 
+    ##   No  Yes 
+    ## 1220 3825
+
+``` r
+# totalSexPartners
+table(maleData$totalSexPartners)
+```
+
+    ## 
+    ##          1         10         11         12         13         14         15 
+    ##        782        216         29         62         19         14        101 
+    ##         16         17         18         19          2         20         21 
+    ##         17          9         14          1        786         93          7 
+    ##         22         23         24         25         26         27         28 
+    ##          4          2          8         31          6          3          4 
+    ##         29          3         30         31         32         33         35 
+    ##          4        876         50          2          4          2          4 
+    ##         36         38          4         40         42         44         45 
+    ##          2          1        515         21          1          3          5 
+    ##         46         48          5         50         52         54         55 
+    ##          5          1        495         14          1          1          6 
+    ##         56         58         59          6         60         61         62 
+    ##          2          1          1        265          9          0          1 
+    ##         64         66         67          7         70         76          8 
+    ##          1          1          1        191          4          1        141 
+    ##         80         88         89          9         90        95+ Don't know 
+    ##          6          1          2         39          1         29        127
+
+``` r
+summary(maleData$totalSexPartners)
+```
+
+    ##          1         10         11         12         13         14         15 
+    ##        782        216         29         62         19         14        101 
+    ##         16         17         18         19          2         20         21 
+    ##         17          9         14          1        786         93          7 
+    ##         22         23         24         25         26         27         28 
+    ##          4          2          8         31          6          3          4 
+    ##         29          3         30         31         32         33         35 
+    ##          4        876         50          2          4          2          4 
+    ##         36         38          4         40         42         44         45 
+    ##          2          1        515         21          1          3          5 
+    ##         46         48          5         50         52         54         55 
+    ##          5          1        495         14          1          1          6 
+    ##         56         58         59          6         60         61         62 
+    ##          2          1          1        265          9          0          1 
+    ##         64         66         67          7         70         76          8 
+    ##          1          1          1        191          4          1        141 
+    ##         80         88         89          9         90        95+ Don't know 
+    ##          6          1          2         39          1         29        127
+
+``` r
+maleData <-maleData[maleData$totalSexPartners != "Don't know" ,]
+maleData$totalSexPartners<-maleData$totalSexPartners[,drop=TRUE]
+maleData$totalSexPartners<-as.factor(revalue(as.character(maleData$totalSexPartners), c("95+" = "95")))
+
+maleData<-maleData[!is.na(maleData$totalSexPartners),]
+
+maleData$totalSexPartners<-as.character(maleData$totalSexPartners)
+maleData$totalSexPartners<-as.numeric(maleData$totalSexPartners)
+maleData$lifetimePartners<-"0_1"
+maleData$lifetimePartners[maleData$totalSexPartners > 1 & maleData$totalSexPartners < 98 ]<-"2+"
+maleData$lifetimePartners<-as.factor(maleData$lifetimePartners)
+table(maleData$lifetimePartners)
+```
+
+    ## 
+    ##  0_1   2+ 
+    ##  782 4136
+
+## Extract female variables
+
+``` r
+# Extract variables of interest
+femaleDataset <- as.data.frame(femaleDataFrame$V001) #clnumber
+femaleDataset$V002 <- femaleDataFrame$V002 # hhnumber
+femaleDataset$V003 <- femaleDataFrame$V003 # linenumber
+femaleDataset$V005 <- femaleDataFrame$V005 # indivweight
+femaleDataset$V012 <- femaleDataFrame$V012 # age
+femaleDataset$V013 <- femaleDataFrame$V013 # agegroup
+femaleDataset$V104 <- femaleDataFrame$V104 # YLivedinResidence
+femaleDataset$V105 <- femaleDataFrame$V105 # previousType
+femaleDataset$V105a <- femaleDataFrame$V105A # previousRegion
+femaleDataset$V106 <- femaleDataFrame$V106 # higher level of education
+femaleDataset$V130 <- femaleDataFrame$V130 # religion
+femaleDataset$V190 <- femaleDataFrame$V190 # Wealthindexcombined
+femaleDataset$V481 <- femaleDataFrame$V481 # covered by health insurance
+femaleDataset$V501 <- femaleDataFrame$V501 # marital status
+femaleDataset$sex <- "Female"
+
+#sexual variables
+femaleDataset$V761 <- femaleDataFrame$V761 # used a condom the last time she had sexual intercourse.
+femaleDataset$V763a <- femaleDataFrame$V763A # previous STI 12 
+femaleDataset$v766b <- femaleDataFrame$V766B # number of sex partners in last 12 months
+femaleDataset$V781 <- femaleDataFrame$V781 # hivtested
+femaleDataset$V836 <- femaleDataFrame$V836 # total lifetime number of sex partners
+
+#geographical variables
+femaleDataset$region <- femaleDataFrame$V024 # region
+femaleDataset$placeType <- femaleDataFrame$V025 # rural or urban
+femaleDataset$V026 <- femaleDataFrame$V026 # placeLocation
+femaleDataset$PSU <- femaleDataFrame$V021 # PSU svydesign
+femaleDataset$V022 <- femaleDataFrame$V022 # Strata sampling error
+
+# rename each column for nemonic purposes
+names(femaleDataset) <- c(
+  "clnumber",
+  "hhnumber",
+  "linenumber",
+  "indivweight",
+  "age",
+  "agegroup",
+  "YLivedinResidence",
+  "previousType",
+  "previousRegion",
+  "education",
+  "religion",
+  "Wealthindexcombined",
+  "healthInsured",
+  "maritalStatus",
+  "sex",
+  
+  "condomLastTime",
+  "previousSTI",
+  "sexPartners",
+  "hivtested",
+  "totalSexPartners",
+  
+  "region",
+  "placeType",
+  "placeLocation",
+  "PSU",
+  "V022"
+)
+
+# id for females
+femaleDataset$id<-paste(femaleDataset$clnumber,
+                        femaleDataset$hhnumber,
+                        femaleDataset$linenumber,sep="")
+femaleDataset$id<-as.numeric(femaleDataset$id, 16L)
+femaleDataset$id<-sprintf("%010d", femaleDataset$id)
+femaleDataset<-femaleDataset[!(duplicated(femaleDataset$id)),]
+```
+
+## Join HIV to male dataset
+
+``` r
+### merge female and hiv
+femaleData <- merge(femaleDataset, hivdataset, by = "id")
+
+## hivStatus
+# which(is.na(femaleData$migstatus))
+# sum(is.na(femaleData$migstatus))
+# apply(femaleData, 2, function(x) any(is.na(x)))
+# table(femaleData$hivStatus)
+# levels(femaleData$hivStatus)
+# levels(femaleData$hivStatus)
+# table(femaleData$hivStatus)
+#remove 9 results in hivStatus
+femaleData <-femaleData[femaleData$hivStatus == "HIV  positive" | femaleData$hivStatus == "HIV negative", ]
+femaleData$hivStatus<-as.factor(revalue(as.character(femaleData$hivStatus), c("HIV  positive" = "hiv+","HIV negative"="hiv-")))
+femaleData$hivStatus<-as.factor(femaleData$hivStatus)
+
+#migStatus
+table(femaleData$YLivedinResidence)
+```
+
+    ## 
+    ##            0            1           10           11           12           13 
+    ##          806          548          300          154          172          174 
+    ##           14           15           16           17           18           19 
+    ##          141          271          107          109           88           68 
+    ##            2           20           21           22           23           24 
+    ##          449           99           62           54           47           47 
+    ##           25           26           27           28           29            3 
+    ##           41           33           23           33           11          500 
+    ##           30           31           32           33           34           35 
+    ##           27            6           13           16            6           12 
+    ##           36           37           38           39            4           40 
+    ##            6            0            2            1          385            7 
+    ##           45           46           47           49            5            6 
+    ##            1            2            1            0          449          286 
+    ##            7            8            9       Always      Visitor Inconsistent 
+    ##          302          245          186         2480          199            0 
+    ##   Don't know 
+    ##            0
+
+``` r
+summary(femaleData$YLivedinResidence)
+```
+
+    ##            0            1           10           11           12           13 
+    ##          806          548          300          154          172          174 
+    ##           14           15           16           17           18           19 
+    ##          141          271          107          109           88           68 
+    ##            2           20           21           22           23           24 
+    ##          449           99           62           54           47           47 
+    ##           25           26           27           28           29            3 
+    ##           41           33           23           33           11          500 
+    ##           30           31           32           33           34           35 
+    ##           27            6           13           16            6           12 
+    ##           36           37           38           39            4           40 
+    ##            6            0            2            1          385            7 
+    ##           45           46           47           49            5            6 
+    ##            1            2            1            0          449          286 
+    ##            7            8            9       Always      Visitor Inconsistent 
+    ##          302          245          186         2480          199            0 
+    ##   Don't know 
+    ##            0
+
+``` r
+femaleData<- femaleData[femaleData$YLivedinResidence != "Visitor", ]  # we remove visitors
+femaleData$YLivedinResidence[femaleData$YLivedinResidence=="Always"]<-femaleData$age[femaleData$YLivedinResidence=="Always"]
+```
+
+    ## Warning in `[<-.factor`(`*tmp*`, femaleData$YLivedinResidence == "Always", :
+    ## invalid factor level, NA generated
+
+``` r
+femaleData$YLivedinResidence <- femaleData$YLivedinResidence[ , drop=TRUE]
+femaleData<-femaleData[!is.na(femaleData$YLivedinResidence),]
+
+femaleData$migstatus<-"2+"
+femaleData$migstatus[femaleData$YLivedinResidence == 0] <-"0_1y"
+table(femaleData$migstatus)
+```
+
+    ## 
+    ## 0_1y   2+ 
+    ##  806 7796
+
+``` r
+#factorize variables
+femaleData$migstatus<-as.factor(femaleData$migstatus)
 
 
-    15-24 25-34 35-44   45+ 
-     3059  1927  1464   735 
+# normalize weight
+femaleData$indivweight<-femaleData$indivweight/1000000
+#check NAs
+femaleData<-femaleData[!is.na(femaleData$indivweight),]
 
+female.mapped.data<-femaleData
 
-    Middle/Richer        Poorer 
-             4960          2225 
+##### revalues section 
+table(femaleData$agegroup)
+```
 
+    ## 
+    ## 15-19 20-24 25-29 30-34 35-39 40-44 45-49 
+    ##  1932  1569  1460  1385  1050   712   494
 
-      No  Yes 
-    6290  895 
+``` r
+femaleData$agegroup<-as.factor(revalue(as.character(femaleData$agegroup), 
+                                        c("15-19" = "15-24",
+                                          "20-24" = "15-24",
+                                          "25-29" = "25-34",
+                                          "30-34" = "25-34",
+                                          "35-39" = "35-44",
+                                          "40-44" = "35-44",
+                                          "45-49" = "45+",
+                                          "50-54" = "45+",
+                                          "55-59"="45+")))
+```
 
-            No        Yes Don't know       NA's 
-          3432       1621          0       2132 
+    ## The following `from` values were not present in `x`: 50-54, 55-59
 
+``` r
+table(femaleData$agegroup)
+```
 
-            No        Yes Don't know 
-          4895        152          6 
+    ## 
+    ## 15-24 25-34 35-44   45+ 
+    ##  3501  2845  1762   494
 
-             0          1         10         11         12         13         15 
-             0       4036          4          3          1          1          3 
-            18          2         20         28          3         30          4 
-             1        861          2          1         70          1         29 
-             5          6          7          8          9         95 Don't know 
-            14          7          1          6          3          1          2 
-            99 
-             0 
+``` r
+# education
+# table(femaleData$education)
+femaleData$education<-as.factor(revalue(as.character(femaleData$education), 
+                                         c("No education" = "No education/Primary",
+                                           "Primary"="No education/Primary")))
 
+#wealthindexCombined
+ # table(femaleData$Wealthindexcombined)
+femaleData$Wealthindexcombined<-as.factor(revalue(as.character(femaleData$Wealthindexcombined), 
+                                        c("Poorest" = "Poorer", 
+                                          "Middle"="Middle/Richer",
+                                          "Richer"="Middle/Richer",
+                                          "Richest"="Middle/Richer")))
+table(femaleData$Wealthindexcombined)
+```
 
-     0_1   2+ 
-    4036 1009 
+    ## 
+    ## Middle/Richer        Poorer 
+    ##          5998          2604
 
+``` r
+# health insured
+table(femaleData$healthInsured)
+```
 
-      No  Yes 
-    1220 3825 
+    ## 
+    ##   No  Yes 
+    ## 7596 1006
 
+``` r
+# marital status
+ # table(femaleData$maritalStatus)
+femaleData$maritalStatus<-as.factor(revalue(as.character(femaleData$maritalStatus), 
+                                             c("Married" = "Married/Living with partner",
+                                               "Living with partner"="Married/Living with partner",
+                                               "Widowed" = "Divorced/separated",
+                                               "Divorced"="Divorced/separated",
+                                               "No longer living together/separated"="Divorced/separated")))
+#######################
+# sexual information recode
+#######################
+#condom last time
+summary(femaleData$condomLastTime)
+```
 
-             1         10         11         12         13         14         15 
-           782        216         29         62         19         14        101 
-            16         17         18         19          2         20         21 
-            17          9         14          1        786         93          7 
-            22         23         24         25         26         27         28 
-             4          2          8         31          6          3          4 
-            29          3         30         31         32         33         35 
-             4        876         50          2          4          2          4 
-            36         38          4         40         42         44         45 
-             2          1        515         21          1          3          5 
-            46         48          5         50         52         54         55 
-             5          1        495         14          1          1          6 
-            56         58         59          6         60         61         62 
-             2          1          1        265          9          0          1 
-            64         66         67          7         70         76          8 
-             1          1          1        191          4          1        141 
-            80         88         89          9         90        95+ Don't know 
-             6          1          2         39          1         29        127 
+    ##         No        Yes Don't know       NA's 
+    ##       4949       1242          0       2411
 
-             1         10         11         12         13         14         15 
-           782        216         29         62         19         14        101 
-            16         17         18         19          2         20         21 
-            17          9         14          1        786         93          7 
-            22         23         24         25         26         27         28 
-             4          2          8         31          6          3          4 
-            29          3         30         31         32         33         35 
-             4        876         50          2          4          2          4 
-            36         38          4         40         42         44         45 
-             2          1        515         21          1          3          5 
-            46         48          5         50         52         54         55 
-             5          1        495         14          1          1          6 
-            56         58         59          6         60         61         62 
-             2          1          1        265          9          0          1 
-            64         66         67          7         70         76          8 
-             1          1          1        191          4          1        141 
-            80         88         89          9         90        95+ Don't know 
-             6          1          2         39          1         29        127 
+``` r
+femaleData<-femaleData[!is.na(femaleData$condomLastTime),] #*too much NAs
+femaleData$condomLastTime <- femaleData$condomLastTime[ , drop=TRUE]
+ 
+# previousSTI
+table(femaleData$previousSTI)
+```
 
+    ## 
+    ##         No        Yes Don't know 
+    ##       6023        155         13
 
-     0_1   2+ 
-     782 4136 
+``` r
+femaleData <-femaleData[femaleData$previousSTI == "No" | femaleData$previousSTI == "Yes", ]
+femaleData$previousSTI <- femaleData$previousSTI[ , drop=TRUE]
 
-    re-encoding from CP1252
+## sexPartners
+summary(femaleData$sexPartners)
+```
 
+    ##          0          1          2          3          4          5         50 
+    ##          0       6062         93          8          1          3          3 
+    ##          6          8         95 Don't know         99 
+    ##          1          1          2          4          0
 
-               0            1           10           11           12           13 
-             806          548          300          154          172          174 
-              14           15           16           17           18           19 
-             141          271          107          109           88           68 
-               2           20           21           22           23           24 
-             449           99           62           54           47           47 
-              25           26           27           28           29            3 
-              41           33           23           33           11          500 
-              30           31           32           33           34           35 
-              27            6           13           16            6           12 
-              36           37           38           39            4           40 
-               6            0            2            1          385            7 
-              45           46           47           49            5            6 
-               1            2            1            0          449          286 
-               7            8            9       Always      Visitor Inconsistent 
-             302          245          186         2480          199            0 
-      Don't know 
-               0 
+``` r
+femaleData <-femaleData[femaleData$sexPartners != "Don't know" ,]
+femaleData <-femaleData[femaleData$sexPartners != "99", ]
+femaleData<-femaleData[!is.na(femaleData$sexPartners),]
+femaleData$sexPartners<-femaleData$sexPartners[,drop=TRUE]
+femaleData$sexPartners<-as.character(femaleData$sexPartners)
+femaleData$sexPartners<-as.numeric(femaleData$sexPartners)
+femaleData$sexPartnersLast12<-"0_1"
+femaleData$sexPartnersLast12[femaleData$sexPartners > 1]<-"2+"
+femaleData$sexPartnersLast12<-as.factor(femaleData$sexPartnersLast12)
+table(femaleData$sexPartnersLast12)
+```
 
-               0            1           10           11           12           13 
-             806          548          300          154          172          174 
-              14           15           16           17           18           19 
-             141          271          107          109           88           68 
-               2           20           21           22           23           24 
-             449           99           62           54           47           47 
-              25           26           27           28           29            3 
-              41           33           23           33           11          500 
-              30           31           32           33           34           35 
-              27            6           13           16            6           12 
-              36           37           38           39            4           40 
-               6            0            2            1          385            7 
-              45           46           47           49            5            6 
-               1            2            1            0          449          286 
-               7            8            9       Always      Visitor Inconsistent 
-             302          245          186         2480          199            0 
-      Don't know 
-               0 
+    ## 
+    ##  0_1   2+ 
+    ## 6062  112
 
+``` r
+#hivtested
+summary(femaleData$hivtested)
+```
 
-    0_1y   2+ 
-     806 7796 
+    ##   No  Yes 
+    ##  427 5747
 
+``` r
+# totalSexPartners
+table(femaleData$totalSexPartners)
+```
 
-    15-19 20-24 25-29 30-34 35-39 40-44 45-49 
-     1932  1569  1460  1385  1050   712   494 
+    ## 
+    ##          1         10         11         12         15         16         19 
+    ##       3684         19          3          3          9          2          1 
+    ##          2         20         25          3         30         36          4 
+    ##       1392         11          0        610          1          0        222 
+    ##          5         50          6         65          7          8          9 
+    ##        121          3         41          0         18         10          2 
+    ##        95+ Don't know 
+    ##          6         16
 
-    The following `from` values were not present in `x`: 50-54, 55-59
+``` r
+summary(femaleData$totalSexPartners)
+```
 
+    ##          1         10         11         12         15         16         19 
+    ##       3684         19          3          3          9          2          1 
+    ##          2         20         25          3         30         36          4 
+    ##       1392         11          0        610          1          0        222 
+    ##          5         50          6         65          7          8          9 
+    ##        121          3         41          0         18         10          2 
+    ##        95+ Don't know 
+    ##          6         16
 
-    15-24 25-34 35-44   45+ 
-     3501  2845  1762   494 
+``` r
+femaleData<-femaleData[!is.na(femaleData$totalSexPartners),]
+femaleData <-femaleData[femaleData$totalSexPartners != "Don't know" ,]
+femaleData$totalSexPartners<-as.factor(revalue(as.character(femaleData$totalSexPartners), c("95+" = "95")))
+femaleData$totalSexPartners<-as.factor(femaleData$totalSexPartners[,drop=TRUE])
+femaleData<-femaleData[!is.na(femaleData$totalSexPartners),]
+femaleData$totalSexPartners<-as.character(femaleData$totalSexPartners)
+femaleData$totalSexPartners<-as.numeric(femaleData$totalSexPartners)
+femaleData$lifetimePartners<-"0_1"
+femaleData$lifetimePartners[femaleData$totalSexPartners > 1 & femaleData$totalSexPartners < 98 ]<-"2+"
+femaleData$lifetimePartners<-as.factor(femaleData$lifetimePartners)
+table(femaleData$lifetimePartners)
+```
 
+    ## 
+    ##  0_1   2+ 
+    ## 3684 2474
 
-    Middle/Richer        Poorer 
-             5998          2604 
+## Load psu-level variables
 
+We are interested in geodesic distance to national borders and travel
+time to nearest city.
 
-      No  Yes 
-    7596 1006 
+``` r
+Cov<-read.csv("../../ZWGC72FL/ZWGC72FL.csv")
 
-            No        Yes Don't know       NA's 
-          4949       1242          0       2411 
-
-
-            No        Yes Don't know 
-          6023        155         13 
-
-             0          1          2          3          4          5         50 
-             0       6062         93          8          1          3          3 
-             6          8         95 Don't know         99 
-             1          1          2          4          0 
-
-
-     0_1   2+ 
-    6062  112 
-
-      No  Yes 
-     427 5747 
-
-
-             1         10         11         12         15         16         19 
-          3684         19          3          3          9          2          1 
-             2         20         25          3         30         36          4 
-          1392         11          0        610          1          0        222 
-             5         50          6         65          7          8          9 
-           121          3         41          0         18         10          2 
-           95+ Don't know 
-             6         16 
-
-             1         10         11         12         15         16         19 
-          3684         19          3          3          9          2          1 
-             2         20         25          3         30         36          4 
-          1392         11          0        610          1          0        222 
-             5         50          6         65          7          8          9 
-           121          3         41          0         18         10          2 
-           95+ Don't know 
-             6         16 
-
-
-     0_1   2+ 
-    3684 2474 
+hist(Cov$Proximity_to_National_Borders)
+```
 
 ![](01-load_datasets_files/figure-gfm/unnamed-chunk-6-1.png)<!-- -->
 
+``` r
+Cov$Distance2Borders[Cov$Proximity_to_National_Borders <= 50000 ]<-"50kms"
+Cov$Distance2Borders[Cov$Proximity_to_National_Borders > 50000 & Cov$Proximity_to_National_Borders <= 100000 ]<-"100kms"
+Cov$Distance2Borders[Cov$Proximity_to_National_Borders > 100000 ]<-"100kms+"
+Cov$Distance2Borders<-as.factor(Cov$Distance2Borders)
+table(Cov$Distance2Borders)
+```
 
-     100kms 100kms+   50kms 
-         88     221      91 
+    ## 
+    ##  100kms 100kms+   50kms 
+    ##      88     221      91
+
+``` r
+hist(Cov$Travel_Times_2015)
+```
 
 ![](01-load_datasets_files/figure-gfm/unnamed-chunk-6-2.png)<!-- -->
 
+``` r
+Cov$TravelTime[Cov$Travel_Times_2015 <= 60 ]<-"1hr"
+Cov$TravelTime[Cov$Travel_Times_2015 > 60 & Cov$Travel_Times_2015 <= 120 ]<-"2hrs"
+Cov$TravelTime[Cov$Travel_Times_2015 > 120 ]<-"2hrs+"
+Cov$TravelTime<-as.factor(Cov$TravelTime)
+table(Cov$TravelTime)
+```
+
+    ## 
+    ##   1hr  2hrs 2hrs+ 
+    ##   214    96    90
+
+``` r
+# summary(Cov)
+
+Cov<-Cov%>%
+    dplyr::select(DHSCLUST,
+                  Proximity_to_National_Borders,
+                  Travel_Times_2015,
+                  Distance2Borders,
+                  TravelTime)
+colnames(Cov)<-c("PSU",
+                 "Proximity_to_National_Borders",
+                 "Travel_Times_2015",
+                 "Distance2Borders",
+                 "TravelTimes")
+
+Cov$Travel_Times_2015<-Cov$Travel_Times_2015/60
+Cov$Proximity_to_National_Borders<-Cov$Proximity_to_National_Borders/1000
+```
+
+## Join males, females and psu variables
+
+``` r
+allZWE<-rbind(femaleData,maleData)
+allZWE <- merge(allZWE, Cov, by = "PSU")
+
+allZWE$sex<-as.factor(allZWE$sex)
+allZWE$sex<-relevel(allZWE$sex, ref = "Male")
+
+allZWE$sexPartnersLast12<-relevel(allZWE$sexPartnersLast12, ref = "0_1")
+allZWE$condomLastTime<-relevel(allZWE$condomLastTime, ref = "No")
+allZWE$lifetimePartners<-relevel(allZWE$lifetimePartners, ref = "0_1")
+allZWE$maritalStatus<-relevel(allZWE$maritalStatus, ref = "Never in union")
+allZWE$hivStatus<-relevel(allZWE$hivStatus, ref = "hiv-")
+
+#sortering
+allZWE$migstatus<-factor(allZWE$migstatus,levels=c("0_1y", "2+"))
+allZWE$migstatus<-relevel(allZWE$migstatus, ref = "2+")
+allZWE$maritalStatus<-factor(allZWE$maritalStatus, levels=c("Never in union",
+                                                          "Married/Living with partner",
+                                                          "Divorced/separated"))
+allZWE$Distance2Borders<-factor(allZWE$Distance2Borders,c("100kms+","100kms","50kms"))
+levels(allZWE$Distance2Borders)
+```
+
+    ## [1] "100kms+" "100kms"  "50kms"
+
+``` r
+allZWE$TravelTimes<-factor(allZWE$TravelTimes,levels=c("2hrs+", "2hrs","1hr"))
+
+allZWE <- allZWE %>%
+    dplyr::select(PSU,
+            V022,
+            sex,
+            age,
+            YLivedinResidence,
+            indivweight,
+            sampleweight,
+            hivStatus,
+            migstatus,
+            agegroup,
+            education,
+            Wealthindexcombined,
+            placeType,
+            maritalStatus,
+            sexPartnersLast12,
+            lifetimePartners,
+            condomLastTime,
+            previousSTI,
+            hivtested,
+            healthInsured,
+            Distance2Borders,
+            TravelTimes,
+            Proximity_to_National_Borders,
+            Travel_Times_2015
+            )
+```
+
+## Prepare final files
+
+We have created several intermediate files, so we proceed to delete all
+unnecesary variables for the final dataset.
+
+``` r
+rm(Cov, femaleData,femaleDataFrame,femaleDataset,hivDataFrame,hivdataset,maleData,maleDataFrame,maleDataset,mapped.data,country)
+```
+
+    ## Warning in rm(Cov, femaleData, femaleDataFrame, femaleDataset, hivDataFrame, :
+    ## object 'mapped.data' not found
+
+    ## Warning in rm(Cov, femaleData, femaleDataFrame, femaleDataset, hivDataFrame, :
+    ## object 'country' not found
 
-      1hr  2hrs 2hrs+ 
-      214    96    90 
+``` r
+save.image("zwe_dataset.RData")
+```
 
-    [1] "100kms+" "100kms"  "50kms"  
-
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.05
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-<th style="text-align:right;">
-VIF
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.12
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.21
-</td>
-<td style="text-align:right;">
--7.25
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-hivStatushiv+
-</td>
-<td style="text-align:right;">
-1.30
-</td>
-<td style="text-align:right;">
-1.01
-</td>
-<td style="text-align:right;">
-1.67
-</td>
-<td style="text-align:right;">
-2.01
-</td>
-<td style="text-align:right;">
-0.05
-</td>
-<td style="text-align:right;">
-1.32
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-sexFemale
-</td>
-<td style="text-align:right;">
-1.37
-</td>
-<td style="text-align:right;">
-1.10
-</td>
-<td style="text-align:right;">
-1.69
-</td>
-<td style="text-align:right;">
-2.87
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-2.02
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-agegroup25-34
-</td>
-<td style="text-align:right;">
-0.41
-</td>
-<td style="text-align:right;">
-0.34
-</td>
-<td style="text-align:right;">
-0.50
-</td>
-<td style="text-align:right;">
--9.36
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-2.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-agegroup35-44
-</td>
-<td style="text-align:right;">
-0.20
-</td>
-<td style="text-align:right;">
-0.15
-</td>
-<td style="text-align:right;">
-0.27
-</td>
-<td style="text-align:right;">
--11.08
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-2.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-agegroup45+
-</td>
-<td style="text-align:right;">
-0.18
-</td>
-<td style="text-align:right;">
-0.11
-</td>
-<td style="text-align:right;">
-0.28
-</td>
-<td style="text-align:right;">
--7.59
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-2.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-educationNo education/Primary
-</td>
-<td style="text-align:right;">
-0.87
-</td>
-<td style="text-align:right;">
-0.56
-</td>
-<td style="text-align:right;">
-1.35
-</td>
-<td style="text-align:right;">
--0.62
-</td>
-<td style="text-align:right;">
-0.53
-</td>
-<td style="text-align:right;">
-1.84
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-educationSecondary
-</td>
-<td style="text-align:right;">
-1.04
-</td>
-<td style="text-align:right;">
-0.72
-</td>
-<td style="text-align:right;">
-1.49
-</td>
-<td style="text-align:right;">
-0.20
-</td>
-<td style="text-align:right;">
-0.84
-</td>
-<td style="text-align:right;">
-1.84
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-WealthindexcombinedPoorer
-</td>
-<td style="text-align:right;">
-0.65
-</td>
-<td style="text-align:right;">
-0.50
-</td>
-<td style="text-align:right;">
-0.85
-</td>
-<td style="text-align:right;">
--3.21
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-1.56
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-healthInsuredYes
-</td>
-<td style="text-align:right;">
-0.67
-</td>
-<td style="text-align:right;">
-0.45
-</td>
-<td style="text-align:right;">
-0.99
-</td>
-<td style="text-align:right;">
--2.03
-</td>
-<td style="text-align:right;">
-0.04
-</td>
-<td style="text-align:right;">
-1.55
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-maritalStatusMarried/Living with partner
-</td>
-<td style="text-align:right;">
-0.77
-</td>
-<td style="text-align:right;">
-0.55
-</td>
-<td style="text-align:right;">
-1.07
-</td>
-<td style="text-align:right;">
--1.55
-</td>
-<td style="text-align:right;">
-0.12
-</td>
-<td style="text-align:right;">
-3.09
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-maritalStatusDivorced/separated
-</td>
-<td style="text-align:right;">
-2.01
-</td>
-<td style="text-align:right;">
-1.44
-</td>
-<td style="text-align:right;">
-2.80
-</td>
-<td style="text-align:right;">
-4.08
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-3.09
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-placeTypeRural
-</td>
-<td style="text-align:right;">
-1.56
-</td>
-<td style="text-align:right;">
-1.16
-</td>
-<td style="text-align:right;">
-2.10
-</td>
-<td style="text-align:right;">
-2.97
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-2.29
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-condomLastTimeYes
-</td>
-<td style="text-align:right;">
-0.82
-</td>
-<td style="text-align:right;">
-0.65
-</td>
-<td style="text-align:right;">
-1.02
-</td>
-<td style="text-align:right;">
--1.76
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-<td style="text-align:right;">
-1.90
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-previousSTIYes
-</td>
-<td style="text-align:right;">
-1.04
-</td>
-<td style="text-align:right;">
-0.62
-</td>
-<td style="text-align:right;">
-1.74
-</td>
-<td style="text-align:right;">
-0.15
-</td>
-<td style="text-align:right;">
-0.88
-</td>
-<td style="text-align:right;">
-1.48
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-hivtestedYes
-</td>
-<td style="text-align:right;">
-0.81
-</td>
-<td style="text-align:right;">
-0.60
-</td>
-<td style="text-align:right;">
-1.09
-</td>
-<td style="text-align:right;">
--1.38
-</td>
-<td style="text-align:right;">
-0.17
-</td>
-<td style="text-align:right;">
-1.63
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-sexPartnersLast122+
-</td>
-<td style="text-align:right;">
-1.17
-</td>
-<td style="text-align:right;">
-0.90
-</td>
-<td style="text-align:right;">
-1.52
-</td>
-<td style="text-align:right;">
-1.14
-</td>
-<td style="text-align:right;">
-0.25
-</td>
-<td style="text-align:right;">
-1.32
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-lifetimePartners2+
-</td>
-<td style="text-align:right;">
-1.27
-</td>
-<td style="text-align:right;">
-1.04
-</td>
-<td style="text-align:right;">
-1.57
-</td>
-<td style="text-align:right;">
-2.30
-</td>
-<td style="text-align:right;">
-0.02
-</td>
-<td style="text-align:right;">
-1.56
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Distance2Borders100kms
-</td>
-<td style="text-align:right;">
-0.65
-</td>
-<td style="text-align:right;">
-0.50
-</td>
-<td style="text-align:right;">
-0.86
-</td>
-<td style="text-align:right;">
--3.05
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-1.56
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Distance2Borders50kms
-</td>
-<td style="text-align:right;">
-0.96
-</td>
-<td style="text-align:right;">
-0.75
-</td>
-<td style="text-align:right;">
-1.22
-</td>
-<td style="text-align:right;">
--0.33
-</td>
-<td style="text-align:right;">
-0.74
-</td>
-<td style="text-align:right;">
-1.56
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-TravelTimes2hrs
-</td>
-<td style="text-align:right;">
-1.11
-</td>
-<td style="text-align:right;">
-0.84
-</td>
-<td style="text-align:right;">
-1.47
-</td>
-<td style="text-align:right;">
-0.75
-</td>
-<td style="text-align:right;">
-0.45
-</td>
-<td style="text-align:right;">
-2.13
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-TravelTimes1hr
-</td>
-<td style="text-align:right;">
-1.48
-</td>
-<td style="text-align:right;">
-1.08
-</td>
-<td style="text-align:right;">
-2.04
-</td>
-<td style="text-align:right;">
-2.41
-</td>
-<td style="text-align:right;">
-0.02
-</td>
-<td style="text-align:right;">
-2.13
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-10994
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.05
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-<th style="text-align:right;">
-VIF
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.12
-</td>
-<td style="text-align:right;">
-0.06
-</td>
-<td style="text-align:right;">
-0.21
-</td>
-<td style="text-align:right;">
--7.25
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-hivStatushiv+
-</td>
-<td style="text-align:right;">
-1.28
-</td>
-<td style="text-align:right;">
-0.99
-</td>
-<td style="text-align:right;">
-1.65
-</td>
-<td style="text-align:right;">
-1.87
-</td>
-<td style="text-align:right;">
-0.06
-</td>
-<td style="text-align:right;">
-1.32
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-sexFemale
-</td>
-<td style="text-align:right;">
-1.40
-</td>
-<td style="text-align:right;">
-1.13
-</td>
-<td style="text-align:right;">
-1.74
-</td>
-<td style="text-align:right;">
-3.09
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-2.03
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-agegroup25-34
-</td>
-<td style="text-align:right;">
-0.42
-</td>
-<td style="text-align:right;">
-0.34
-</td>
-<td style="text-align:right;">
-0.50
-</td>
-<td style="text-align:right;">
--9.18
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-1.99
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-agegroup35-44
-</td>
-<td style="text-align:right;">
-0.20
-</td>
-<td style="text-align:right;">
-0.15
-</td>
-<td style="text-align:right;">
-0.27
-</td>
-<td style="text-align:right;">
--10.99
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-1.99
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-agegroup45+
-</td>
-<td style="text-align:right;">
-0.18
-</td>
-<td style="text-align:right;">
-0.12
-</td>
-<td style="text-align:right;">
-0.29
-</td>
-<td style="text-align:right;">
--7.40
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-1.99
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-educationNo education/Primary
-</td>
-<td style="text-align:right;">
-0.89
-</td>
-<td style="text-align:right;">
-0.56
-</td>
-<td style="text-align:right;">
-1.40
-</td>
-<td style="text-align:right;">
--0.52
-</td>
-<td style="text-align:right;">
-0.60
-</td>
-<td style="text-align:right;">
-1.84
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-educationSecondary
-</td>
-<td style="text-align:right;">
-1.07
-</td>
-<td style="text-align:right;">
-0.74
-</td>
-<td style="text-align:right;">
-1.56
-</td>
-<td style="text-align:right;">
-0.36
-</td>
-<td style="text-align:right;">
-0.72
-</td>
-<td style="text-align:right;">
-1.84
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-WealthindexcombinedPoorer
-</td>
-<td style="text-align:right;">
-0.66
-</td>
-<td style="text-align:right;">
-0.51
-</td>
-<td style="text-align:right;">
-0.86
-</td>
-<td style="text-align:right;">
--3.08
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-1.59
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-healthInsuredYes
-</td>
-<td style="text-align:right;">
-0.66
-</td>
-<td style="text-align:right;">
-0.44
-</td>
-<td style="text-align:right;">
-0.98
-</td>
-<td style="text-align:right;">
--2.04
-</td>
-<td style="text-align:right;">
-0.04
-</td>
-<td style="text-align:right;">
-1.52
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-maritalStatusMarried/Living with partner
-</td>
-<td style="text-align:right;">
-0.76
-</td>
-<td style="text-align:right;">
-0.54
-</td>
-<td style="text-align:right;">
-1.07
-</td>
-<td style="text-align:right;">
--1.59
-</td>
-<td style="text-align:right;">
-0.11
-</td>
-<td style="text-align:right;">
-3.04
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-maritalStatusDivorced/separated
-</td>
-<td style="text-align:right;">
-1.95
-</td>
-<td style="text-align:right;">
-1.39
-</td>
-<td style="text-align:right;">
-2.73
-</td>
-<td style="text-align:right;">
-3.90
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-3.04
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-placeTypeRural
-</td>
-<td style="text-align:right;">
-1.55
-</td>
-<td style="text-align:right;">
-1.15
-</td>
-<td style="text-align:right;">
-2.10
-</td>
-<td style="text-align:right;">
-2.87
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-2.32
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-condomLastTimeYes
-</td>
-<td style="text-align:right;">
-0.81
-</td>
-<td style="text-align:right;">
-0.64
-</td>
-<td style="text-align:right;">
-1.01
-</td>
-<td style="text-align:right;">
--1.85
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-1.93
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-previousSTIYes
-</td>
-<td style="text-align:right;">
-1.08
-</td>
-<td style="text-align:right;">
-0.65
-</td>
-<td style="text-align:right;">
-1.79
-</td>
-<td style="text-align:right;">
-0.28
-</td>
-<td style="text-align:right;">
-0.78
-</td>
-<td style="text-align:right;">
-1.44
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-hivtestedYes
-</td>
-<td style="text-align:right;">
-0.81
-</td>
-<td style="text-align:right;">
-0.60
-</td>
-<td style="text-align:right;">
-1.09
-</td>
-<td style="text-align:right;">
--1.39
-</td>
-<td style="text-align:right;">
-0.17
-</td>
-<td style="text-align:right;">
-1.66
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-sexPartnersLast122+
-</td>
-<td style="text-align:right;">
-1.17
-</td>
-<td style="text-align:right;">
-0.89
-</td>
-<td style="text-align:right;">
-1.52
-</td>
-<td style="text-align:right;">
-1.13
-</td>
-<td style="text-align:right;">
-0.26
-</td>
-<td style="text-align:right;">
-1.35
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-lifetimePartners2+
-</td>
-<td style="text-align:right;">
-1.28
-</td>
-<td style="text-align:right;">
-1.04
-</td>
-<td style="text-align:right;">
-1.58
-</td>
-<td style="text-align:right;">
-2.34
-</td>
-<td style="text-align:right;">
-0.02
-</td>
-<td style="text-align:right;">
-1.51
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Distance2Borders100kms
-</td>
-<td style="text-align:right;">
-0.64
-</td>
-<td style="text-align:right;">
-0.48
-</td>
-<td style="text-align:right;">
-0.84
-</td>
-<td style="text-align:right;">
--3.18
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-<td style="text-align:right;">
-1.55
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Distance2Borders50kms
-</td>
-<td style="text-align:right;">
-0.95
-</td>
-<td style="text-align:right;">
-0.74
-</td>
-<td style="text-align:right;">
-1.21
-</td>
-<td style="text-align:right;">
--0.45
-</td>
-<td style="text-align:right;">
-0.65
-</td>
-<td style="text-align:right;">
-1.55
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-TravelTimes2hrs
-</td>
-<td style="text-align:right;">
-1.11
-</td>
-<td style="text-align:right;">
-0.84
-</td>
-<td style="text-align:right;">
-1.48
-</td>
-<td style="text-align:right;">
-0.73
-</td>
-<td style="text-align:right;">
-0.47
-</td>
-<td style="text-align:right;">
-2.18
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-TravelTimes1hr
-</td>
-<td style="text-align:right;">
-1.49
-</td>
-<td style="text-align:right;">
-1.08
-</td>
-<td style="text-align:right;">
-2.07
-</td>
-<td style="text-align:right;">
-2.40
-</td>
-<td style="text-align:right;">
-0.02
-</td>
-<td style="text-align:right;">
-2.18
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-
-## Unadjusted
-
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.09
-</td>
-<td style="text-align:right;">
--40.32
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-hivStatushiv+
-</td>
-<td style="text-align:right;">
-1.05
-</td>
-<td style="text-align:right;">
-0.84
-</td>
-<td style="text-align:right;">
-1.31
-</td>
-<td style="text-align:right;">
-0.43
-</td>
-<td style="text-align:right;">
-0.67
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.06
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-<td style="text-align:right;">
--34.45
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-sexFemale
-</td>
-<td style="text-align:right;">
-1.28
-</td>
-<td style="text-align:right;">
-1.09
-</td>
-<td style="text-align:right;">
-1.51
-</td>
-<td style="text-align:right;">
-2.97
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.03
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.05
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.16
-</td>
-<td style="text-align:right;">
-0.14
-</td>
-<td style="text-align:right;">
-0.19
-</td>
-<td style="text-align:right;">
--26.56
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-agegroup25-34
-</td>
-<td style="text-align:right;">
-0.41
-</td>
-<td style="text-align:right;">
-0.34
-</td>
-<td style="text-align:right;">
-0.49
-</td>
-<td style="text-align:right;">
--9.67
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-agegroup35-44
-</td>
-<td style="text-align:right;">
-0.20
-</td>
-<td style="text-align:right;">
-0.16
-</td>
-<td style="text-align:right;">
-0.26
-</td>
-<td style="text-align:right;">
--12.40
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-agegroup45+
-</td>
-<td style="text-align:right;">
-0.17
-</td>
-<td style="text-align:right;">
-0.11
-</td>
-<td style="text-align:right;">
-0.26
-</td>
-<td style="text-align:right;">
--8.32
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.05
-</td>
-<td style="text-align:right;">
-0.04
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
--18.97
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-educationNo education/Primary
-</td>
-<td style="text-align:right;">
-1.37
-</td>
-<td style="text-align:right;">
-0.96
-</td>
-<td style="text-align:right;">
-1.97
-</td>
-<td style="text-align:right;">
-1.72
-</td>
-<td style="text-align:right;">
-0.09
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-educationSecondary
-</td>
-<td style="text-align:right;">
-1.78
-</td>
-<td style="text-align:right;">
-1.31
-</td>
-<td style="text-align:right;">
-2.42
-</td>
-<td style="text-align:right;">
-3.70
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.09
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-<td style="text-align:right;">
-0.10
-</td>
-<td style="text-align:right;">
--34.27
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-WealthindexcombinedPoorer
-</td>
-<td style="text-align:right;">
-0.70
-</td>
-<td style="text-align:right;">
-0.55
-</td>
-<td style="text-align:right;">
-0.88
-</td>
-<td style="text-align:right;">
--3.10
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.09
-</td>
-<td style="text-align:right;">
--41.51
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-healthInsuredYes
-</td>
-<td style="text-align:right;">
-0.53
-</td>
-<td style="text-align:right;">
-0.38
-</td>
-<td style="text-align:right;">
-0.74
-</td>
-<td style="text-align:right;">
--3.69
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.01
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.02
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.14
-</td>
-<td style="text-align:right;">
-0.11
-</td>
-<td style="text-align:right;">
-0.17
-</td>
-<td style="text-align:right;">
--18.22
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-maritalStatusMarried/Living with partner
-</td>
-<td style="text-align:right;">
-0.44
-</td>
-<td style="text-align:right;">
-0.34
-</td>
-<td style="text-align:right;">
-0.56
-</td>
-<td style="text-align:right;">
--6.65
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-maritalStatusDivorced/separated
-</td>
-<td style="text-align:right;">
-1.29
-</td>
-<td style="text-align:right;">
-0.99
-</td>
-<td style="text-align:right;">
-1.68
-</td>
-<td style="text-align:right;">
-1.92
-</td>
-<td style="text-align:right;">
-0.06
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.06
-</td>
-<td style="text-align:right;">
-0.09
-</td>
-<td style="text-align:right;">
--27.26
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-placeTypeRural
-</td>
-<td style="text-align:right;">
-1.05
-</td>
-<td style="text-align:right;">
-0.83
-</td>
-<td style="text-align:right;">
-1.33
-</td>
-<td style="text-align:right;">
-0.42
-</td>
-<td style="text-align:right;">
-0.68
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.06
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-<td style="text-align:right;">
--41.19
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-condomLastTimeYes
-</td>
-<td style="text-align:right;">
-1.44
-</td>
-<td style="text-align:right;">
-1.20
-</td>
-<td style="text-align:right;">
-1.73
-</td>
-<td style="text-align:right;">
-3.96
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.09
-</td>
-<td style="text-align:right;">
--44.21
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-previousSTIYes
-</td>
-<td style="text-align:right;">
-1.20
-</td>
-<td style="text-align:right;">
-0.74
-</td>
-<td style="text-align:right;">
-1.95
-</td>
-<td style="text-align:right;">
-0.76
-</td>
-<td style="text-align:right;">
-0.45
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.09
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.12
-</td>
-<td style="text-align:right;">
--19.93
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-hivtestedYes
-</td>
-<td style="text-align:right;">
-0.79
-</td>
-<td style="text-align:right;">
-0.61
-</td>
-<td style="text-align:right;">
-1.04
-</td>
-<td style="text-align:right;">
--1.70
-</td>
-<td style="text-align:right;">
-0.09
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-<td style="text-align:right;">
--42.70
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-sexPartnersLast122+
-</td>
-<td style="text-align:right;">
-1.33
-</td>
-<td style="text-align:right;">
-1.05
-</td>
-<td style="text-align:right;">
-1.69
-</td>
-<td style="text-align:right;">
-2.37
-</td>
-<td style="text-align:right;">
-0.02
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.06
-</td>
-<td style="text-align:right;">
-0.09
-</td>
-<td style="text-align:right;">
--31.42
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-lifetimePartners2+
-</td>
-<td style="text-align:right;">
-1.08
-</td>
-<td style="text-align:right;">
-0.91
-</td>
-<td style="text-align:right;">
-1.28
-</td>
-<td style="text-align:right;">
-0.87
-</td>
-<td style="text-align:right;">
-0.38
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.09
-</td>
-<td style="text-align:right;">
-0.07
-</td>
-<td style="text-align:right;">
-0.10
-</td>
-<td style="text-align:right;">
--31.41
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Distance2Borders100kms
-</td>
-<td style="text-align:right;">
-0.63
-</td>
-<td style="text-align:right;">
-0.47
-</td>
-<td style="text-align:right;">
-0.84
-</td>
-<td style="text-align:right;">
--3.15
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Distance2Borders50kms
-</td>
-<td style="text-align:right;">
-0.88
-</td>
-<td style="text-align:right;">
-0.69
-</td>
-<td style="text-align:right;">
-1.13
-</td>
-<td style="text-align:right;">
--0.98
-</td>
-<td style="text-align:right;">
-0.33
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Observations
-</td>
-<td style="text-align:right;">
-11076
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Dependent variable
-</td>
-<td style="text-align:right;">
-migstatus
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Type
-</td>
-<td style="text-align:right;">
-Survey-weighted generalized linear model
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Family
-</td>
-<td style="text-align:right;">
-quasibinomial
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Link
-</td>
-<td style="text-align:right;">
-logit
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;">
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (Cragg-Uhler)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-Pseudo-R² (McFadden)
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-AIC
-</td>
-<td style="text-align:right;">
-NA
-</td>
-</tr>
-</tbody>
-</table>
-<table class="table table-striped table-hover table-condensed table-responsive" style="width: auto !important; margin-left: auto; margin-right: auto;border-bottom: 0;">
-<thead>
-<tr>
-<th style="text-align:left;">
-</th>
-<th style="text-align:right;">
-exp(Est.)
-</th>
-<th style="text-align:right;">
-2.5%
-</th>
-<th style="text-align:right;">
-97.5%
-</th>
-<th style="text-align:right;">
-t val.
-</th>
-<th style="text-align:right;">
-p
-</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-(Intercept)
-</td>
-<td style="text-align:right;">
-0.06
-</td>
-<td style="text-align:right;">
-0.05
-</td>
-<td style="text-align:right;">
-0.08
-</td>
-<td style="text-align:right;">
--24.91
-</td>
-<td style="text-align:right;">
-0.00
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-TravelTimes2hrs
-</td>
-<td style="text-align:right;">
-1.16
-</td>
-<td style="text-align:right;">
-0.86
-</td>
-<td style="text-align:right;">
-1.56
-</td>
-<td style="text-align:right;">
-0.98
-</td>
-<td style="text-align:right;">
-0.33
-</td>
-</tr>
-<tr>
-<td style="text-align:left;font-weight: bold;">
-TravelTimes1hr
-</td>
-<td style="text-align:right;">
-1.44
-</td>
-<td style="text-align:right;">
-1.10
-</td>
-<td style="text-align:right;">
-1.88
-</td>
-<td style="text-align:right;">
-2.63
-</td>
-<td style="text-align:right;">
-0.01
-</td>
-</tr>
-</tbody>
-<tfoot>
-<tr>
-<td style="padding: 0; " colspan="100%">
-<sup></sup> Standard errors: Robust
-</td>
-</tr>
-</tfoot>
-</table>
-
-# Baseline
-
-    migstatus
-         2+    0_1y 
-    10121.5   777.6 
-
-
-        Design-based one-sample t-test
-
-    data:  migstatus ~ 0
-    t = 238.38, df = 380, p-value < 2.2e-16
-    alternative hypothesis: true mean is not equal to 0
-    95 percent confidence interval:
-     0.92099451 0.06368564
-    sample estimates:
-         mean 
-    0.9286544 
-
-             migstatus
-    hivStatus 2+ 0_1y
-         hiv- 84   84
-         hiv+ 16   16
-
-             migstatus
-    hivStatus   2+ 0_1y
-         hiv- 8538  651
-         hiv+ 1583  127
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~hivStatus + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 0.23833, df = 1, p-value = 0.6666
-
-            migstatus
-    sex      2+ 0_1y
-      Male   45   39
-      Female 55   61
-
-            migstatus
-    sex        2+ 0_1y
-      Male   4514  300
-      Female 5607  477
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~sex + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 10.66, df = 1, p-value = 0.002909
-
-         migstatus      age        se     ci_l     ci_u          cv       cv%
-    2+          2+ 31.72433 0.1260216 31.47733 31.97133 0.003972395 0.3972395
-    0_1y      0_1y 26.14723 0.3247604 25.51071 26.78375 0.012420454 1.2420454
-                var
-    2+   0.01588144
-    0_1y 0.10546933
-
-![](01-load_datasets_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
-
-
-        Design-based t-test
-
-    data:  age ~ migstatus
-    t = -16.467, df = 380, p-value < 2.2e-16
-    alternative hypothesis: true difference in mean is not equal to 0
-    95 percent confidence interval:
-     -6.240903 -4.913302
-    sample estimates:
-    difference in mean 
-             -5.577103 
-
-            migstatus
-    agegroup 2+ 0_1y
-       15-24 24   51
-       25-34 39   34
-       35-44 27   12
-       45+    9    3
-
-            migstatus
-    agegroup   2+ 0_1y
-       15-24 2418  394
-       25-34 3996  266
-       35-44 2749   91
-       45+    958   27
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~agegroup + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 304.57, df = 3, p-value < 2.2e-16
-
-                          migstatus
-    education              2+ 0_1y
-      Higher               10    6
-      No education/Primary 28   24
-      Secondary            63   70
-
-                          migstatus
-    education                2+ 0_1y
-      Higher                993   48
-      No education/Primary 2791  185
-      Secondary            6337  545
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~education + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 20.443, df = 2, p-value = 0.0002066
-
-                       migstatus
-    Wealthindexcombined 2+ 0_1y
-          Middle/Richer 64   72
-          Poorer        36   28
-
-                       migstatus
-    Wealthindexcombined   2+ 0_1y
-          Middle/Richer 6455  557
-          Poorer        3666  220
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~Wealthindexcombined + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 19.815, df = 1, p-value = 0.001876
-
-                 migstatus
-    healthInsured 2+ 0_1y
-              No  87   93
-              Yes 13    7
-
-                 migstatus
-    healthInsured   2+ 0_1y
-              No  8848  723
-              Yes 1273   55
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~healthInsured + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 20.874, df = 1, p-value = 0.0001801
-
-                                 migstatus
-    maritalStatus                 2+ 0_1y
-      Never in union              13   23
-      Married/Living with partner 80   61
-      Divorced/separated           7   16
-
-                                 migstatus
-    maritalStatus                   2+ 0_1y
-      Never in union              1316  178
-      Married/Living with partner 8111  478
-      Divorced/separated           695  122
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~maritalStatus + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 159.71, df = 2, p-value < 2.2e-16
-
-             migstatus
-    placeType 2+ 0_1y
-        Urban 36   35
-        Rural 64   65
-
-             migstatus
-    placeType   2+ 0_1y
-        Urban 3664  272
-        Rural 6458  505
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~placeType + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 0.42497, df = 1, p-value = 0.6768
-
-                  migstatus
-    condomLastTime 2+ 0_1y
-               No  77   70
-               Yes 23   30
-
-                  migstatus
-    condomLastTime   2+ 0_1y
-               No  7786  543
-               Yes 2336  235
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~condomLastTime + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 20.644, df = 1, p-value = 6.878e-05
-
-               migstatus
-    previousSTI 2+ 0_1y
-            No  98   97
-            Yes  2    3
-
-               migstatus
-    previousSTI   2+ 0_1y
-            No  9880  755
-            Yes  242   22
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~previousSTI + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 0.69944, df = 1, p-value = 0.4477
-
-             migstatus
-    hivtested 2+ 0_1y
-          No  14   18
-          Yes 86   82
-
-             migstatus
-    hivtested   2+ 0_1y
-          No  1460  136
-          Yes 8662  641
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~hivtested + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 5.5806, df = 1, p-value = 0.0881
-
-                     migstatus
-    sexPartnersLast12 2+ 0_1y
-                  0_1 91   88
-                  2+   9   12
-
-                     migstatus
-    sexPartnersLast12   2+ 0_1y
-                  0_1 9175  684
-                  2+   946   94
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~sexPartnersLast12 + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 6.3531, df = 1, p-value = 0.01736
-
-                    migstatus
-    lifetimePartners 2+ 0_1y
-                 0_1 42   40
-                 2+  58   60
-
-                    migstatus
-    lifetimePartners   2+ 0_1y
-                 0_1 4240  311
-                 2+  5881  466
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~lifetimePartners + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 1.0423, df = 1, p-value = 0.3838
-
-                    migstatus
-    Distance2Borders 2+ 0_1y
-             100kms+ 58   65
-             100kms  22   16
-             50kms   19   19
-
-                    migstatus
-    Distance2Borders   2+ 0_1y
-             100kms+ 5912  507
-             100kms  2241  121
-             50kms   1969  149
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~Distance2Borders + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 20.575, df = 2, p-value = 0.003867
-
-               migstatus
-    TravelTimes 2+ 0_1y
-          2hrs+ 22   17
-          2hrs  25   23
-          1hr   52   59
-
-               migstatus
-    TravelTimes   2+ 0_1y
-          2hrs+ 2245  136
-          2hrs  2564  180
-          1hr   5313  462
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~TravelTimes + migstatus, design = dhs1, statistic = "Chisq")
-    X-squared = 15.486, df = 2, p-value = 0.02013
-
-    hivStatus
-     hiv-  hiv+ 
-    650.9 126.7 
-
-            hivStatus
-    sex       hiv-  hiv+
-      Male   257.4  42.9
-      Female 393.5  83.8
-
-            hivStatus
-    sex      hiv- hiv+
-      Male   39.5 33.8
-      Female 60.5 66.2
-
-            hivStatus
-    sex      hiv- hiv+
-      Male    257   43
-      Female  393   84
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~sex + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 1.5792, df = 1, p-value = 0.2589
-
-            hivStatus
-    agegroup  hiv-  hiv+
-       15-24 361.7  31.9
-       25-34 212.5  53.4
-       35-44  61.2  30.2
-       45+    15.5  11.3
-
-            hivStatus
-    agegroup hiv- hiv+
-       15-24 55.6 25.1
-       25-34 32.6 42.1
-       35-44  9.4 23.9
-       45+    2.4  8.9
-
-            hivStatus
-    agegroup hiv- hiv+
-       15-24  362   32
-       25-34  213   53
-       35-44   61   30
-       45+     16   11
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~agegroup + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 58.696, df = 3, p-value = 9.505e-10
-
-                          hivStatus
-    education               hiv-  hiv+
-      Higher                42.5   5.5
-      No education/Primary 152.3  32.7
-      Secondary            456.0  88.6
-
-                          hivStatus
-    education              hiv- hiv+
-      Higher                6.5  4.3
-      No education/Primary 23.4 25.8
-      Secondary            70.1 69.9
-
-                          hivStatus
-    education              hiv- hiv+
-      Higher                 42    5
-      No education/Primary  152   33
-      Secondary             456   89
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~education + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 1.2068, df = 2, p-value = 0.5984
-
-                       hivStatus
-    Wealthindexcombined  hiv-  hiv+
-          Middle/Richer 469.0  88.2
-          Poorer        181.9  38.6
-
-                       hivStatus
-    Wealthindexcombined hiv- hiv+
-          Middle/Richer 72.1 69.6
-          Poorer        27.9 30.4
-
-                       hivStatus
-    Wealthindexcombined hiv- hiv+
-          Middle/Richer  469   88
-          Poorer         182   39
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~Wealthindexcombined + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 0.3506, df = 1, p-value = 0.5781
-
-                 hivStatus
-    healthInsured  hiv-  hiv+
-              No  611.6 111.1
-              Yes  39.3  15.6
-
-                 hivStatus
-    healthInsured hiv- hiv+
-              No  94.0 87.7
-              Yes  6.0 12.3
-
-                 hivStatus
-    healthInsured hiv- hiv+
-              No   612  111
-              Yes   39   16
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~healthInsured + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 6.9423, df = 1, p-value = 0.04589
-
-                                 hivStatus
-    maritalStatus                  hiv-  hiv+
-      Never in union              160.5  17.4
-      Married/Living with partner 394.9  83.3
-      Divorced/separated           95.5  26.1
-
-                                 hivStatus
-    maritalStatus                 hiv- hiv+
-      Never in union              24.7 13.7
-      Married/Living with partner 60.7 65.7
-      Divorced/separated          14.7 20.6
-
-                                 hivStatus
-    maritalStatus                 hiv- hiv+
-      Never in union               160   17
-      Married/Living with partner  395   83
-      Divorced/separated            95   26
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~maritalStatus + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 9.0866, df = 2, p-value = 0.03081
-
-             hivStatus
-    placeType  hiv-  hiv+
-        Urban 230.1  42.4
-        Rural 420.8  84.4
-
-             hivStatus
-    placeType hiv- hiv+
-        Urban 35.4 33.4
-        Rural 64.6 66.6
-
-             hivStatus
-    placeType hiv- hiv+
-        Urban  230   42
-        Rural  421   84
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~placeType + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 0.1868, df = 1, p-value = 0.707
-
-                  hivStatus
-    condomLastTime  hiv-  hiv+
-               No  471.0  71.8
-               Yes 179.9  54.9
-
-                  hivStatus
-    condomLastTime hiv- hiv+
-               No  72.4 56.7
-               Yes 27.6 43.3
-
-                  hivStatus
-    condomLastTime hiv- hiv+
-               No   471   72
-               Yes  180   55
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~condomLastTime + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 13.465, df = 1, p-value = 0.005121
-
-               hivStatus
-    previousSTI  hiv-  hiv+
-            No  637.9 117.4
-            Yes  12.9   9.3
-
-               hivStatus
-    previousSTI hiv- hiv+
-            No  98.0 92.6
-            Yes  2.0  7.4
-
-               hivStatus
-    previousSTI hiv- hiv+
-            No   638  117
-            Yes   13    9
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~previousSTI + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 12.009, df = 1, p-value = 0.0003316
-
-             hivStatus
-    hivtested  hiv-  hiv+
-          No  122.5  13.6
-          Yes 528.4 113.1
-
-             hivStatus
-    hivtested hiv- hiv+
-          No  18.8 10.7
-          Yes 81.2 89.3
-
-             hivStatus
-    hivtested hiv- hiv+
-          No   123   14
-          Yes  528  113
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~hivtested + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 5.2179, df = 1, p-value = 0.03643
-
-                     hivStatus
-    sexPartnersLast12  hiv-  hiv+
-                  0_1 571.2 112.5
-                  2+   79.7  14.3
-
-                     hivStatus
-    sexPartnersLast12 hiv- hiv+
-                  0_1 87.8 88.7
-                  2+  12.2 11.3
-
-                     hivStatus
-    sexPartnersLast12 hiv- hiv+
-                  0_1  571  112
-                  2+    80   14
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~sexPartnersLast12 + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 0.10531, df = 1, p-value = 0.759
-
-                    hivStatus
-    lifetimePartners  hiv-  hiv+
-                 0_1 280.9  30.4
-                 2+  370.0  96.3
-
-                    hivStatus
-    lifetimePartners hiv- hiv+
-                 0_1 43.2 24.0
-                 2+  56.8 76.0
-
-                    hivStatus
-    lifetimePartners hiv- hiv+
-                 0_1  281   30
-                 2+   370   96
-
-        Pearson's X^2: Rao & Scott adjustment
-
-    data:  svychisq(~lifetimePartners + hivStatus, design = dhs1m, statistic = "Chisq")
-    X-squared = 17.565, df = 1, p-value = 0.0005108
-
-# Mapping
-
-     0_1y    2+ 
-     1312 14475 
-
-     hiv-  hiv+ 
-    13487  2300 
-
-          
-            0_1y    2+
-      hiv-  1141 12346
-      hiv+   171  2129
-
-    [1] 15740.66
-
-    [1] 15740.66
+This is the end of the pre-processing stage. We have extracted and
+processed our data files, including their design sampling information.
+They are now ready to be used in the statistical analysis.
