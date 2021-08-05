@@ -17,7 +17,7 @@ In summary, I performed a Variance Inflated Factor (VIF) to account for multicol
 ## File index
 
 1. [Load and ETL](https://github.com/maurosc3ner/twostagesampling_playground/blob/main/unit1/01-load_datasets.md)
-2. [Statistical analysis]()
+2. [Statistical analysis](https://github.com/maurosc3ner/twostagesampling_playground/blob/main/unit2/02-analysis.md)
 3. [Kriging & bivariate maps in R]()
 
 Advance topics: 
